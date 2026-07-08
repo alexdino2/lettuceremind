@@ -89,7 +89,67 @@ lettuceremind clear
 ```
 
 The pantry lives in `~/.lettuceremind/pantry.json` (override with `--store`
-or `$LETTUCEREMIND_STORE`).
+or `$LETTUCEREMIND_STORE`). When you're logged in (see
+[Accounts](#-accounts-login--registration)), it lives in your own
+per-user file instead.
+
+## 💸 Local deals
+
+LettuceRemind tracks weekly grocery deals at **Publix**, **Kroger**,
+**Whole Foods**, and **Costco**, and cross-references them with your pantry —
+so you know when something you're about to run out of is on sale:
+
+```bash
+lettuceremind deals                  # this week's deals at all four stores
+lettuceremind deals publix           # one store (kroger, "whole foods", costco)
+lettuceremind deals --pantry         # only deals on items you currently have
+```
+
+```
+💸 Local deals for 2026-07-08 — Publix, Kroger, Whole Foods, Costco
+
+  Publix
+    strawberries — 16 oz   BOGO $4.99   thru Jul 14  ← in your pantry, expires in 2d — restock
+    avocado — each         $1.25        (reg $2.00)  thru Jul 14
+    ...
+```
+
+Grocery circulars rotate Wednesday→Tuesday; Costco's savings run per
+calendar month. Because the app is offline and none of these chains offer a
+free public deals API, the built-in catalog is **representative sample
+circular data** that rotates deterministically each week — the plumbing for
+real data is there: drop a JSON feed at `~/.lettuceremind/deals.json` (or
+point `$LETTUCEREMIND_DEALS` at one) and it's merged in on top:
+
+```json
+{"deals": [{"store": "kroger", "item": "milk", "price": "$1.99",
+            "regular_price": "$3.49", "description": "gallon",
+            "valid_from": "2026-07-01", "valid_to": "2026-07-08"}]}
+```
+
+Expired or malformed entries are skipped; `item` is matched against the
+product database so pantry cross-referencing keeps working.
+
+## 👤 Accounts (login & registration)
+
+Accounts are optional, local to your machine, and give **every feature its
+own per-user pantry** — scan, add, list, expiring, remove, clear, and deals
+all follow the logged-in user:
+
+```bash
+lettuceremind register alice         # prompts for a password, logs you in
+lettuceremind login alice
+lettuceremind whoami                 # who's logged in + which pantry is active
+lettuceremind logout                 # back to the shared pantry
+```
+
+While logged in, your pantry lives at
+`~/.lettuceremind/users/<name>/pantry.json`; without a login the shared
+`pantry.json` is used, so existing setups keep working. Passwords are never
+stored — only a salted PBKDF2-HMAC-SHA256 hash (200k iterations) — and
+logging out revokes the session token, so a stale session file can't
+authenticate. `--password` is accepted for scripting; omit it to be
+prompted securely.
 
 ### As a library
 
@@ -116,8 +176,11 @@ Key modules:
 | `lettuceremind/receipt/normalize.py` | abbreviation expansion & cleanup |
 | `lettuceremind/receipt/matcher.py` | staged product matching |
 | `lettuceremind/shelf_life.py` | product & shelf-life database |
-| `lettuceremind/store.py` | JSON pantry persistence |
+| `lettuceremind/store.py` | JSON pantry persistence (per-user aware) |
 | `lettuceremind/reminders.py` | expiration reminders |
+| `lettuceremind/deals.py` | local deals: Publix, Kroger, Whole Foods, Costco |
+| `lettuceremind/auth.py` | local accounts: register, login, sessions |
+| `lettuceremind/paths.py` | data directory resolution (`$LETTUCEREMIND_HOME`) |
 | `lettuceremind/cli.py` | command-line interface |
 
 `tests/test_accuracy.py` holds the recognition-accuracy guarantee; if you
