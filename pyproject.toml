@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lettuceremind"
+version = "1.0.0"
+description = "Scan grocery receipts, get reminded before your food expires."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+authors = [{ name = "LettuceRemind contributors" }]
+keywords = ["groceries", "receipt", "ocr", "food-waste", "reminders"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Environment :: Console",
+    "Topic :: Home Automation",
+]
+dependencies = []
+
+[project.optional-dependencies]
+ocr = ["pytesseract>=0.3", "Pillow>=10"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+lettuceremind = "lettuceremind.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["lettuceremind*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

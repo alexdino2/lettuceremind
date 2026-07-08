@@ -1,0 +1,28 @@
+KROGER
+789 MARKET ST
+YOUR CASHIER WAS ALEX
+KRO 2% RDCD FAT MLK          2.99 B
+GRK YOG VAN 32OZ             4.49 B
+ROTIS CHICKEN                6.99 B
+BBY CARROTS 1LB              1.19 B
+RUSST POTS 5LB               3.79 B
+YEL ONIONS 3LB               2.49 B
+SLCD PROVOLONE CHS           3.59 B
+HVY WHP CRM PT               3.19 B
+SRDGH BREAD LOAF             3.99 B
+FRZN MXD VEG 32OZ            2.29 B
+CHKN NDLE SP CN              1.25 B
+OJ NOT FROM CONC 52OZ        3.89 B
+TILAPIA FLTS FRESH           7.99 B
+QTY 2 GALA APPLES            1.58 B
+KOMBUCHA GNGR                3.49 B
+SC TOTAL SAVINGS             4.32
+SUBTOTAL                    53.20
+TAX                          1.86
+**** BALANCE                55.06
+DEBIT PURCHASE              55.06
+CHANGE                       0.00
+TOTAL NUMBER OF ITEMS SOLD - 15
+05/02/2026 09:14am 618 10 80 553
+THANK YOU FOR SHOPPING WITH US
+FUEL POINTS EARNED TODAY: 55
