@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
 from datetime import date, timedelta
 from typing import Optional
 
-from lettuceremind import __version__
+from lettuceremind import __version__, auth
+from lettuceremind.deals import STORES, current_deals, match_pantry, resolve_store
 from lettuceremind.models import PantryItem
 from lettuceremind.receipt.matcher import FoodMatcher
 from lettuceremind.receipt.scanner import ReceiptScanner
@@ -119,6 +121,102 @@ def cmd_clear(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_deals(args: argparse.Namespace) -> int:
+    today = args.date or date.today()
+    stores: Optional[list[str]] = None
+    if args.store_name:
+        try:
+            stores = [resolve_store(args.store_name)]
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+
+    deals = current_deals(today=today, stores=stores)
+    matches = match_pantry(deals, PantryStore(args.store).all())
+    if args.pantry:
+        deals = [d for d in deals if d in matches]
+        if not deals:
+            print("No current deals match what's in your pantry.")
+            return 0
+
+    names = ", ".join(STORES[key] for key in (stores or STORES))
+    print(f"💸 Local deals for {today.isoformat()} — {names}\n")
+    for key in stores or list(STORES):
+        group = [d for d in deals if d.store == key]
+        if not group:
+            continue
+        print(f"  {STORES[key]}")
+        labels = {d: d.item + (f" — {d.description}" if d.description else "")
+                  for d in group}
+        width = max(len(label) for label in labels.values())
+        price_width = max(len(d.price) for d in group)
+        for deal in group:
+            reg = f"  (reg {deal.regular_price})" if deal.regular_price else ""
+            note = ""
+            pantry_item = matches.get(deal)
+            if pantry_item is not None:
+                days = pantry_item.days_left(today)
+                if days < 0:
+                    note = "  ← in your pantry (expired — replace it)"
+                elif days == 0:
+                    note = "  ← in your pantry, expires TODAY — restock"
+                elif days <= 3:
+                    note = f"  ← in your pantry, expires in {days}d — restock"
+                else:
+                    note = "  ← in your pantry"
+            tag = "  [custom feed]" if deal.source == "custom" else ""
+            print(f"    {labels[deal]:<{width}}  {deal.price:<{price_width}}{reg}"
+                  f"  thru {deal.valid_to.strftime('%b %d')}{note}{tag}")
+        print()
+    if any(d.source == "builtin" for d in deals):
+        print("  (built-in sample circulars; plug in a live feed via "
+              "~/.lettuceremind/deals.json — see README)")
+    return 0
+
+
+def _read_password(args: argparse.Namespace, confirm: bool) -> str:
+    if args.password:
+        return args.password
+    password = getpass.getpass("Password: ")
+    if confirm and getpass.getpass("Confirm password: ") != password:
+        raise auth.AuthError("passwords do not match")
+    return password
+
+
+def cmd_register(args: argparse.Namespace) -> int:
+    username = auth.register(args.username, _read_password(args, confirm=True))
+    print(f"👤 Registered and logged in as {username}.")
+    print(f"Your pantry now lives at {auth.user_pantry_path(username)} — "
+          f"scan, add, list, expiring and deals all use it while you're logged in.")
+    return 0
+
+
+def cmd_login(args: argparse.Namespace) -> int:
+    username = auth.login(args.username, _read_password(args, confirm=False))
+    print(f"👤 Logged in as {username}. All commands now use your pantry "
+          f"({auth.user_pantry_path(username)}).")
+    return 0
+
+
+def cmd_logout(args: argparse.Namespace) -> int:
+    username = auth.logout()
+    if username:
+        print(f"Logged out {username}. Back to the shared pantry.")
+    else:
+        print("Not logged in.")
+    return 0
+
+
+def cmd_whoami(args: argparse.Namespace) -> int:
+    username = auth.current_user()
+    path = PantryStore(args.store).path
+    if username:
+        print(f"👤 Logged in as {username}\n   pantry: {path}")
+    else:
+        print(f"Not logged in — using the shared pantry.\n   pantry: {path}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lettuceremind",
@@ -165,6 +263,37 @@ def build_parser() -> argparse.ArgumentParser:
     p_clear = sub.add_parser("clear", help="remove all pantry items")
     p_clear.set_defaults(func=cmd_clear)
 
+    p_deals = sub.add_parser(
+        "deals",
+        help="this week's grocery deals (Publix, Kroger, Whole Foods, Costco)")
+    p_deals.add_argument("store_name", nargs="?", metavar="STORE",
+                         help="only one store, e.g. publix, kroger, "
+                              '"whole foods", costco')
+    p_deals.add_argument("--pantry", action="store_true",
+                         help="only deals on items currently in your pantry")
+    p_deals.add_argument("--date", type=_parse_date, default=None,
+                         help="show deals as of DATE (default: today)")
+    p_deals.set_defaults(func=cmd_deals)
+
+    p_reg = sub.add_parser("register", help="create an account (and log in)")
+    p_reg.add_argument("username")
+    p_reg.add_argument("--password", default=None,
+                       help="password (omit to be prompted securely)")
+    p_reg.set_defaults(func=cmd_register)
+
+    p_login = sub.add_parser("login", help="log in — every command then uses "
+                                           "your own pantry")
+    p_login.add_argument("username")
+    p_login.add_argument("--password", default=None,
+                         help="password (omit to be prompted securely)")
+    p_login.set_defaults(func=cmd_login)
+
+    p_logout = sub.add_parser("logout", help="log out (back to the shared pantry)")
+    p_logout.set_defaults(func=cmd_logout)
+
+    p_who = sub.add_parser("whoami", help="show the active account and pantry")
+    p_who.set_defaults(func=cmd_whoami)
+
     return parser
 
 
@@ -172,6 +301,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
+    except auth.AuthError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     except BrokenPipeError:
         # Output piped to a closed reader (e.g. `lettuceremind list | head`).
         return 0

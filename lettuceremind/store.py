@@ -1,4 +1,12 @@
-"""JSON-backed pantry storage."""
+"""JSON-backed pantry storage.
+
+The pantry file is resolved in priority order: an explicit path (the
+``--store`` flag), then ``$LETTUCEREMIND_STORE``, then the logged-in
+user's own pantry (``~/.lettuceremind/users/<name>/pantry.json``), and
+finally the shared pantry (``~/.lettuceremind/pantry.json``). Every
+feature goes through this resolution, so logging in switches the whole
+app to that user's pantry.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +15,17 @@ import os
 from pathlib import Path
 from typing import Optional, Union
 
+from lettuceremind import auth
 from lettuceremind.models import PantryItem
+from lettuceremind.paths import base_dir
 
-DEFAULT_STORE_PATH = Path.home() / ".lettuceremind" / "pantry.json"
+
+def default_store_path() -> Path:
+    """The active user's pantry when logged in, else the shared pantry."""
+    username = auth.current_user()
+    if username is not None:
+        return auth.user_pantry_path(username)
+    return base_dir() / "pantry.json"
 
 
 class PantryStore:
@@ -17,7 +33,7 @@ class PantryStore:
 
     def __init__(self, path: Union[str, Path, None] = None):
         env_path = os.environ.get("LETTUCEREMIND_STORE")
-        self.path = Path(path or env_path or DEFAULT_STORE_PATH)
+        self.path = Path(path or env_path or default_store_path())
         self._items: list[PantryItem] = []
         self._load()
 
