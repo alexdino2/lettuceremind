@@ -28,5 +28,8 @@ lettuceremind = "lettuceremind.cli:main"
 [tool.setuptools.packages.find]
 include = ["lettuceremind*"]
 
+[tool.setuptools.package-data]
+"lettuceremind.web" = ["static/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

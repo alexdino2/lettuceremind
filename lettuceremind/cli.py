@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import secrets
 import sys
 from datetime import date, timedelta
 from typing import Optional
@@ -174,6 +175,44 @@ def cmd_deals(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    from lettuceremind.web.server import create_server, lan_ip
+
+    api_key = None if args.no_key else secrets.token_urlsafe(6)
+    try:
+        httpd, _app = create_server(
+            args.host, args.port, store_path=args.store,
+            api_key=api_key, certfile=args.certfile, keyfile=args.keyfile,
+        )
+    except OSError as exc:
+        print(f"error: could not start server: {exc}", file=sys.stderr)
+        return 1
+
+    scheme = "https" if args.certfile else "http"
+    host = lan_ip() if args.host in ("", "0.0.0.0", "::") else args.host
+    url = f"{scheme}://{host}:{httpd.server_address[1]}/"
+    if api_key:
+        url += f"?key={api_key}"
+    username = auth.current_user()
+    pantry = PantryStore(args.store).path
+
+    print("🥬 LettuceRemind Pantry Scanner")
+    print(f"   Open this on your iPhone (same Wi-Fi):\n\n   {url}\n")
+    print(f"   pantry: {pantry}" + (f"  (user: {username})" if username else ""))
+    if not args.certfile:
+        print("   Live viewfinder mode needs HTTPS (--certfile/--keyfile); "
+              "over plain HTTP the app\n   uses tap-to-snap photos via the "
+              "native camera, which works everywhere.")
+    print("   Ctrl-C to stop.")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    finally:
+        httpd.server_close()
+    return 0
+
+
 def _read_password(args: argparse.Namespace, confirm: bool) -> str:
     if args.password:
         return args.password
@@ -274,6 +313,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_deals.add_argument("--date", type=_parse_date, default=None,
                          help="show deals as of DATE (default: today)")
     p_deals.set_defaults(func=cmd_deals)
+
+    p_serve = sub.add_parser(
+        "serve",
+        help="host the mobile pantry-scanner web app — scan your pantry "
+             "with your iPhone camera")
+    p_serve.add_argument("--host", default="0.0.0.0",
+                         help="address to bind (default: all interfaces)")
+    p_serve.add_argument("--port", type=int, default=8043,
+                         help="port to listen on (default: 8043)")
+    p_serve.add_argument("--no-key", action="store_true",
+                         help="disable the access key (anyone on the network "
+                              "can then edit your pantry)")
+    p_serve.add_argument("--certfile", default=None,
+                         help="TLS certificate (PEM) — enables HTTPS, which "
+                              "unlocks the live viewfinder on iPhone")
+    p_serve.add_argument("--keyfile", default=None,
+                         help="TLS private key (PEM), if separate from "
+                              "--certfile")
+    p_serve.set_defaults(func=cmd_serve)
 
     p_reg = sub.add_parser("register", help="create an account (and log in)")
     p_reg.add_argument("username")

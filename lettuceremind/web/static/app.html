@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#153f23">
+<title>🥬 LettuceRemind — Pantry Scanner</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0e2415; color: #eaf5ec; min-height: 100%;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+  header {
+    padding: calc(14px + env(safe-area-inset-top)) 16px 12px;
+    background: linear-gradient(160deg, #1d5c31, #123a1f);
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 17px; font-weight: 700; }
+  header h1 small { display: block; font-size: 11px; font-weight: 400; opacity: .75; }
+  #pantryBtn {
+    background: rgba(255,255,255,.14); color: inherit; border: 0;
+    border-radius: 999px; padding: 8px 14px; font-size: 13px; font-weight: 600;
+  }
+  main { padding: 14px; max-width: 480px; margin: 0 auto; }
+
+  /* camera stage */
+  #stage {
+    position: relative; border-radius: 18px; overflow: hidden;
+    background: #06120a; aspect-ratio: 3 / 4; margin-bottom: 12px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #video { width: 100%; height: 100%; object-fit: cover; }
+  #stage.flash::after {
+    content: ""; position: absolute; inset: 0; background: #b6f2c3;
+    animation: flash .45s ease-out forwards;
+  }
+  @keyframes flash { from { opacity: .75; } to { opacity: 0; } }
+  #reticle {
+    position: absolute; inset: 14% 10%; border: 2px dashed rgba(255,255,255,.45);
+    border-radius: 16px; pointer-events: none;
+  }
+  #stageHint {
+    position: absolute; left: 0; right: 0; bottom: 12px; text-align: center;
+    font-size: 12.5px; color: rgba(255,255,255,.85);
+    text-shadow: 0 1px 3px rgba(0,0,0,.7); padding: 0 20px;
+  }
+  #photoIntro { text-align: center; padding: 24px; font-size: 14px; line-height: 1.55; color: #cfe6d4; }
+  #photoIntro .big { font-size: 44px; display: block; margin-bottom: 10px; }
+
+  /* controls */
+  #controls { display: flex; align-items: center; justify-content: center; gap: 22px; margin-bottom: 16px; }
+  #shutter {
+    width: 76px; height: 76px; border-radius: 50%; border: 5px solid #eaf5ec;
+    background: #2e9e52; color: #fff; font-size: 30px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #shutter:active { transform: scale(.93); }
+  #shutter:disabled { opacity: .45; }
+  .side-btn {
+    background: rgba(255,255,255,.12); border: 0; color: inherit; width: 58px;
+    border-radius: 14px; padding: 8px 0 6px; font-size: 11px; font-weight: 600;
+  }
+  .side-btn span { display: block; font-size: 20px; margin-bottom: 2px; }
+  .side-btn.on { background: #2e9e52; }
+  #fileInput { display: none; }
+
+  #status {
+    min-height: 22px; text-align: center; font-size: 13.5px; margin-bottom: 14px;
+    color: #a9cbb1; transition: color .2s;
+  }
+  #status.good { color: #8df0a8; font-weight: 600; }
+  #status.bad  { color: #ffb1a1; }
+
+  .banner {
+    background: #4d2a16; border: 1px solid #8a5b34; color: #ffd9b8;
+    border-radius: 12px; padding: 10px 12px; font-size: 13px; line-height: 1.5;
+    margin-bottom: 14px; white-space: pre-wrap; display: none;
+  }
+
+  /* feed */
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+       color: #7fae8b; margin: 18px 0 8px; }
+  .card {
+    background: #16341f; border-radius: 14px; padding: 11px 13px; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 11px; animation: pop .25s ease-out;
+  }
+  @keyframes pop { from { transform: translateY(-6px); opacity: 0; } }
+  .card.gone { opacity: .4; }
+  .card .info { flex: 1; min-width: 0; }
+  .card .name { font-weight: 700; font-size: 15px; text-transform: capitalize; }
+  .card .meta { font-size: 12px; color: #9dbfa6; margin-top: 2px; }
+  .badge {
+    font-size: 11px; font-weight: 700; border-radius: 999px; padding: 3px 9px;
+    background: #1f5b33; color: #9df0b4; white-space: nowrap;
+  }
+  .badge.warn { background: #5b3a1f; color: #ffce9d; }
+  .undo, .rm {
+    border: 0; background: rgba(255,255,255,.1); color: #d9ecdd;
+    border-radius: 10px; padding: 7px 11px; font-size: 12.5px; font-weight: 600;
+  }
+  #feedEmpty, #pantryEmpty { color: #6f957a; font-size: 13.5px; padding: 6px 2px; }
+
+  /* manual add */
+  #addRow { display: flex; gap: 8px; margin-bottom: 4px; }
+  #addName {
+    flex: 1; border: 1px solid #2c5238; background: #0f2b19; color: inherit;
+    border-radius: 12px; padding: 11px 13px; font-size: 15px;
+  }
+  #addName::placeholder { color: #628a6e; }
+  #addBtn {
+    border: 0; background: #2e9e52; color: #fff; border-radius: 12px;
+    padding: 0 18px; font-size: 15px; font-weight: 700;
+  }
+
+  #pantryPanel { display: none; }
+  body.show-pantry #scannerPanel { display: none; }
+  body.show-pantry #pantryPanel { display: block; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🥬 LettuceRemind<small>Pantry Scanner</small></h1>
+  <button id="pantryBtn">Pantry (…)</button>
+</header>
+
+<main>
+  <div class="banner" id="banner"></div>
+
+  <section id="scannerPanel">
+    <div id="stage">
+      <video id="video" autoplay playsinline muted hidden></video>
+      <div id="photoIntro" hidden>
+        <span class="big">📷</span>
+        Tap the shutter to snap a shelf or label.<br>
+        Each recognized food is added to your pantry automatically.
+      </div>
+      <div id="reticle" hidden></div>
+      <div id="stageHint" hidden>Frame one label or a shelf, then tap the shutter</div>
+    </div>
+
+    <div id="controls">
+      <button class="side-btn" id="autoBtn" hidden><span>🔁</span>Auto</button>
+      <button id="shutter" aria-label="Scan">🥬</button>
+      <label class="side-btn" for="fileInput" id="photoBtn" hidden><span>🖼️</span>Photo</label>
+      <input type="file" id="fileInput" accept="image/*" capture="environment">
+    </div>
+
+    <div id="status">Starting camera…</div>
+
+    <h2>Added this session</h2>
+    <div id="feed"><div id="feedEmpty">Nothing scanned yet.</div></div>
+
+    <h2>Add by name</h2>
+    <div id="addRow">
+      <input id="addName" placeholder='e.g. "greek yogurt"' autocomplete="off" enterkeyhint="done">
+      <button id="addBtn">Add</button>
+    </div>
+  </section>
+
+  <section id="pantryPanel">
+    <h2>Your pantry</h2>
+    <div id="pantryList"><div id="pantryEmpty">Loading…</div></div>
+  </section>
+</main>
+
+<canvas id="canvas" hidden></canvas>
+
+<script>
+(function () {
+  "use strict";
+  var KEY = new URLSearchParams(location.search).get("key") || "";
+  var $ = function (id) { return document.getElementById(id); };
+  var video = $("video"), stage = $("stage"), status = $("status");
+  var busy = false, liveMode = false, autoTimer = null, pantryCount = null;
+
+  function api(path, body) {
+    return fetch(path, {
+      method: body ? "POST" : "GET",
+      headers: body
+        ? { "Content-Type": "application/json", "X-LettuceRemind-Key": KEY }
+        : { "X-LettuceRemind-Key": KEY },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok) {
+          var err = new Error(data.error || ("HTTP " + res.status));
+          err.status = res.status;
+          throw err;
+        }
+        return data;
+      });
+    });
+  }
+
+  function setStatus(msg, cls) {
+    status.textContent = msg;
+    status.className = cls || "";
+  }
+  function banner(msg) {
+    var el = $("banner");
+    el.textContent = msg;
+    el.style.display = msg ? "block" : "none";
+  }
+  function setCount(n) {
+    if (typeof n === "number") pantryCount = n;
+    $("pantryBtn").textContent = "Pantry (" + (pantryCount === null ? "…" : pantryCount) + ")";
+  }
+
+  // ---- camera ----------------------------------------------------------
+  function startCamera() {
+    var md = navigator.mediaDevices;
+    if (!window.isSecureContext || !md || !md.getUserMedia) return photoMode();
+    md.getUserMedia({
+      video: { facingMode: "environment", width: { ideal: 1920 } },
+      audio: false
+    }).then(function (stream) {
+      liveMode = true;
+      video.srcObject = stream;
+      video.hidden = false;
+      $("reticle").hidden = false;
+      $("stageHint").hidden = false;
+      $("autoBtn").hidden = false;
+      $("photoBtn").hidden = false;
+      setStatus("Point at a label and tap the shutter — or turn on Auto.");
+    }).catch(photoMode);
+  }
+
+  function photoMode() {
+    // No live viewfinder (plain HTTP, or camera denied): the shutter opens
+    // the native iPhone camera instead, which works everywhere.
+    liveMode = false;
+    $("photoIntro").hidden = false;
+    setStatus("Ready — the shutter opens your camera.");
+  }
+
+  // ---- scanning --------------------------------------------------------
+  function frameToJpegBase64(source, w, h) {
+    var canvas = $("canvas");
+    var scale = Math.min(1, 1280 / Math.max(w, h));
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.85).split(",")[1];
+  }
+
+  function scanBase64(b64) {
+    if (busy) return;
+    busy = true;
+    $("shutter").disabled = true;
+    setStatus("Scanning…");
+    api("/api/scan", { image: b64 }).then(function (data) {
+      banner("");
+      setCount(data.pantry_count);
+      var added = data.recognized.filter(function (r) { return r.status === "added"; });
+      var dups = data.recognized.length - added.length;
+      added.forEach(addFeedCard);
+      if (added.length) {
+        stage.classList.remove("flash"); void stage.offsetWidth;
+        stage.classList.add("flash");
+        setStatus("Added " + added.map(function (r) { return r.name; }).join(", "), "good");
+      } else if (dups) {
+        setStatus("Already added just now — keep moving along the shelf.");
+      } else {
+        setStatus("No food recognized — get closer to a label and hold steady.");
+      }
+    }).catch(function (err) {
+      if (err.status === 501) banner(err.message);
+      setStatus(err.status === 501 ? "Server can't OCR images yet." : ("Error: " + err.message), "bad");
+    }).finally(function () {
+      busy = false;
+      $("shutter").disabled = false;
+    });
+  }
+
+  function captureLive() {
+    if (!video.videoWidth) return setStatus("Camera warming up…");
+    scanBase64(frameToJpegBase64(video, video.videoWidth, video.videoHeight));
+  }
+
+  $("shutter").addEventListener("click", function () {
+    if (liveMode) captureLive();
+    else $("fileInput").click();
+  });
+
+  $("fileInput").addEventListener("change", function () {
+    var file = this.files && this.files[0];
+    this.value = "";
+    if (!file) return;
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function () {
+      URL.revokeObjectURL(url);
+      scanBase64(frameToJpegBase64(img, img.naturalWidth, img.naturalHeight));
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); setStatus("Couldn't read that photo.", "bad"); };
+    img.src = url;
+  });
+
+  $("autoBtn").addEventListener("click", function () {
+    if (autoTimer) {
+      clearInterval(autoTimer); autoTimer = null;
+      this.classList.remove("on");
+      setStatus("Auto-scan off.");
+    } else {
+      autoTimer = setInterval(function () { if (!busy) captureLive(); }, 3200);
+      this.classList.add("on");
+      setStatus("Auto-scan on — pan slowly across the shelf.", "good");
+      captureLive();
+    }
+  });
+
+  // ---- session feed ----------------------------------------------------
+  function addFeedCard(r) {
+    var empty = $("feedEmpty");
+    if (empty) empty.remove();
+    var card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML =
+      '<div class="info"><div class="name"></div><div class="meta"></div></div>' +
+      '<span class="badge"></span><button class="undo">Undo</button>';
+    card.querySelector(".name").textContent = r.name;
+    card.querySelector(".meta").textContent =
+      r.category + " · " + Math.round(r.confidence * 100) + "% match";
+    card.querySelector(".badge").textContent = "exp " + (r.expires_on || "?");
+    card.querySelector(".undo").addEventListener("click", function () {
+      var btn = this;
+      btn.disabled = true;
+      api("/api/remove", { name: r.name }).then(function (data) {
+        setCount(data.pantry_count);
+        card.classList.add("gone");
+        btn.textContent = "Removed";
+      }).catch(function (err) {
+        btn.disabled = false;
+        setStatus("Undo failed: " + err.message, "bad");
+      });
+    });
+    $("feed").prepend(card);
+  }
+
+  // ---- manual add ------------------------------------------------------
+  function manualAdd() {
+    var name = $("addName").value.trim();
+    if (!name) return;
+    api("/api/add", { name: name }).then(function (data) {
+      $("addName").value = "";
+      setCount(data.pantry_count);
+      addFeedCard({
+        name: data.added.name, category: data.added.category,
+        confidence: 1, expires_on: data.added.expires_on
+      });
+      setStatus("Added " + data.added.name, "good");
+    }).catch(function (err) { setStatus("Add failed: " + err.message, "bad"); });
+  }
+  $("addBtn").addEventListener("click", manualAdd);
+  $("addName").addEventListener("keydown", function (e) { if (e.key === "Enter") manualAdd(); });
+
+  // ---- pantry panel ----------------------------------------------------
+  function renderPantry(data) {
+    setCount(data.count);
+    var list = $("pantryList");
+    list.innerHTML = "";
+    if (!data.items.length) {
+      list.innerHTML = '<div id="pantryEmpty">Your pantry is empty — scan something!</div>';
+      return;
+    }
+    data.items.forEach(function (item) {
+      var card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML =
+        '<div class="info"><div class="name"></div><div class="meta"></div></div>' +
+        '<span class="badge"></span><button class="rm">✕</button>';
+      card.querySelector(".name").textContent =
+        item.name + (item.quantity > 1 ? " ×" + item.quantity : "");
+      card.querySelector(".meta").textContent = item.category;
+      var badge = card.querySelector(".badge");
+      badge.textContent = item.days_left < 0 ? "expired"
+        : item.days_left === 0 ? "today" : item.days_left + "d left";
+      if (item.days_left <= 2) badge.className = "badge warn";
+      card.querySelector(".rm").addEventListener("click", function () {
+        api("/api/remove", { name: item.name }).then(function () {
+          api("/api/pantry").then(renderPantry);
+        });
+      });
+      list.appendChild(card);
+    });
+  }
+
+  $("pantryBtn").addEventListener("click", function () {
+    var showing = document.body.classList.toggle("show-pantry");
+    this.blur();
+    if (showing) api("/api/pantry").then(renderPantry).catch(function (err) {
+      $("pantryList").innerHTML = "";
+      setStatus("Couldn't load pantry: " + err.message, "bad");
+    });
+  });
+
+  // ---- boot ------------------------------------------------------------
+  api("/api/pantry").then(function (data) { setCount(data.count); }).catch(function (err) {
+    if (err.status === 401) banner("Access key missing or wrong — open the exact URL printed by `lettuceremind serve`.");
+  });
+  startCamera();
+})();
+</script>
+</body>
+</html>

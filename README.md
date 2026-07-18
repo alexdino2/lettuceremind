@@ -93,6 +93,47 @@ or `$LETTUCEREMIND_STORE`). When you're logged in (see
 [Accounts](#-accounts-login--registration)), it lives in your own
 per-user file instead.
 
+## 📱 Pantry Scanner (mobile web app)
+
+Already-bought groceries with no receipt? Walk your pantry with your
+iPhone instead. `lettuceremind serve` hosts a phone-friendly web app on
+your own Wi-Fi — point the camera at shelves and labels, and every
+product it recognizes is **added to your inventory as you scan**, with
+an undo button and a live pantry view:
+
+```bash
+pip install lettuceremind[ocr]     # camera frames are OCR'd server-side
+lettuceremind serve
+
+🥬 LettuceRemind Pantry Scanner
+   Open this on your iPhone (same Wi-Fi):
+
+   http://192.168.1.23:8043/?key=kPz3vQx9
+```
+
+Open that URL in Safari and scan away. How it works:
+
+- Each camera frame is sent to the server, OCR'd, and pushed through the
+  same normalize → match pipeline as receipts. Unlike receipt mode
+  (which never drops a line), pantry mode is **conservative**: nutrition
+  panels, ingredient lists, net-weight lines, and date stamps are
+  filtered out, and only high-confidence product matches are added — a
+  blurry frame adds nothing rather than junk.
+- Re-seeing the same product within ~45 seconds counts as the *same*
+  jar, so consecutive frames don't create duplicates — but scanning two
+  actual boxes of pasta a minute apart adds two.
+- Over plain HTTP, the shutter opens the native iPhone camera
+  (tap-to-snap), which works everywhere. With HTTPS
+  (`--certfile`/`--keyfile`) you get a **live viewfinder with
+  auto-scan** — pan slowly along the shelf and items roll in.
+- There's also a type-to-add box, a session feed with undo, and a
+  pantry view with per-item days-left badges and remove buttons.
+
+The server protects your pantry with a random access key baked into the
+printed URL (disable with `--no-key`), and uses the same pantry
+resolution as the CLI — so if you're logged in, scans land in your own
+per-user pantry. `--host` and `--port` (default 8043) work as expected.
+
 ## 💸 Local deals
 
 LettuceRemind tracks weekly grocery deals at **Publix**, **Kroger**,
@@ -179,6 +220,9 @@ Key modules:
 | `lettuceremind/store.py` | JSON pantry persistence (per-user aware) |
 | `lettuceremind/reminders.py` | expiration reminders |
 | `lettuceremind/deals.py` | local deals: Publix, Kroger, Whole Foods, Costco |
+| `lettuceremind/web/recognize.py` | pantry-photo OCR text → confident food matches |
+| `lettuceremind/web/server.py` | pantry-scanner web server (`lettuceremind serve`) |
+| `lettuceremind/web/static/app.html` | the mobile single-page app |
 | `lettuceremind/auth.py` | local accounts: register, login, sessions |
 | `lettuceremind/paths.py` | data directory resolution (`$LETTUCEREMIND_HOME`) |
 | `lettuceremind/cli.py` | command-line interface |
