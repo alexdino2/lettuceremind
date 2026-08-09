@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date
 from pathlib import Path
 from typing import Optional, Union
 
@@ -81,3 +82,37 @@ class PantryStore:
         self._items = []
         self._save()
         return count
+
+    def remove_expiring(self, within_days: int = 3, today: Optional[date] = None) -> int:
+        """Remove items expiring within ``within_days`` (incl. expired)."""
+        today = today or date.today()
+        before = len(self._items)
+        self._items = [
+            i for i in self._items if i.days_left(today) > within_days
+        ]
+        removed = before - len(self._items)
+        if removed:
+            self._save()
+        return removed
+
+    def update_expiration(
+        self,
+        name: str,
+        expires_on: Union[str, date],
+        new_expires_on: Union[str, date],
+    ) -> int:
+        """Set a new expiration for the first item matching name + expires_on.
+
+        Matching is case-insensitive on ``name``. Returns 1 if updated, else 0.
+        """
+        if isinstance(expires_on, str):
+            expires_on = date.fromisoformat(expires_on)
+        if isinstance(new_expires_on, str):
+            new_expires_on = date.fromisoformat(new_expires_on)
+        lowered = name.lower()
+        for item in self._items:
+            if item.name.lower() == lowered and item.expires_on == expires_on:
+                item.expires_on = new_expires_on
+                self._save()
+                return 1
+        return 0

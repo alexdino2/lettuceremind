@@ -121,6 +121,72 @@
   #pantryPanel { display: none; }
   body.show-pantry #scannerPanel { display: none; }
   body.show-pantry #pantryPanel { display: block; }
+
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin: 18px 0 8px;
+  }
+  .panel-head h2 { margin: 0; }
+  #deleteExpiringBtn {
+    border: 0; background: #5b2a22; color: #ffd0c4;
+    border-radius: 10px; padding: 7px 12px; font-size: 12.5px; font-weight: 700;
+  }
+  #deleteExpiringBtn:disabled { opacity: .4; }
+  #expiringEmpty { color: #6f957a; font-size: 13.5px; padding: 6px 2px; }
+  .card.editing .badge { display: none; }
+  .card .exp-edit {
+    display: none; align-items: center; gap: 6px;
+  }
+  .card.editing .exp-edit { display: flex; }
+  .card.editing .rm { display: none; }
+  .card .exp-edit input[type="date"] {
+    border: 1px solid #2c5238; background: #0f2b19; color: inherit;
+    border-radius: 8px; padding: 5px 7px; font-size: 12.5px; max-width: 138px;
+  }
+  .card .exp-edit .save-exp {
+    border: 0; background: #2e9e52; color: #fff;
+    border-radius: 8px; padding: 6px 9px; font-size: 12px; font-weight: 700;
+  }
+  #editExpiringBar {
+    display: none; font-size: 13px; color: #cfe6d4; margin: 0 0 10px;
+    align-items: center; justify-content: space-between; gap: 10px;
+  }
+  #editExpiringBar.visible { display: flex; }
+  #doneEditingBtn {
+    border: 0; background: rgba(255,255,255,.12); color: inherit;
+    border-radius: 10px; padding: 6px 11px; font-size: 12.5px; font-weight: 600;
+  }
+
+  /* confirm modal */
+  #modalOverlay {
+    display: none; position: fixed; inset: 0; z-index: 40;
+    background: rgba(4, 14, 8, .72);
+    align-items: flex-end; justify-content: center;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  #modalOverlay.open { display: flex; }
+  #confirmModal {
+    width: 100%; max-width: 420px; background: #16341f;
+    border: 1px solid #2c5238; border-radius: 18px; padding: 18px 16px 14px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.35);
+  }
+  #confirmModal h3 {
+    font-size: 16px; font-weight: 700; margin-bottom: 8px; color: #eaf5ec;
+  }
+  #confirmModal p {
+    font-size: 14px; line-height: 1.5; color: #cfe6d4; margin-bottom: 14px;
+  }
+  #confirmActions { display: flex; gap: 8px; margin-bottom: 12px; }
+  #confirmActions button {
+    flex: 1; border: 0; border-radius: 12px; padding: 12px 10px;
+    font-size: 14px; font-weight: 700;
+  }
+  #confirmCancel { background: rgba(255,255,255,.12); color: #eaf5ec; }
+  #confirmDelete { background: #8a3528; color: #ffe6df; }
+  #changeDatesLink {
+    display: block; text-align: center; font-size: 13.5px;
+    color: #9df0b4; text-decoration: underline; padding: 6px 4px 2px;
+  }
 </style>
 </head>
 <body>
@@ -164,10 +230,32 @@
   </section>
 
   <section id="pantryPanel">
+    <div class="panel-head">
+      <h2>Expiring soon</h2>
+      <button id="deleteExpiringBtn" type="button" hidden>Delete all</button>
+    </div>
+    <div id="editExpiringBar">
+      <span>Update dates below, then tap Save.</span>
+      <button id="doneEditingBtn" type="button">Done</button>
+    </div>
+    <div id="expiringList"><div id="expiringEmpty">Nothing expiring soon.</div></div>
+
     <h2>Your pantry</h2>
     <div id="pantryList"><div id="pantryEmpty">Loading…</div></div>
   </section>
 </main>
+
+<div id="modalOverlay" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+  <div id="confirmModal">
+    <h3 id="confirmTitle">Delete expiring items?</h3>
+    <p id="confirmMessage">This will delete 0 items from your pantry. are you sure you want to do this?</p>
+    <div id="confirmActions">
+      <button id="confirmCancel" type="button">Cancel</button>
+      <button id="confirmDelete" type="button">Delete</button>
+    </div>
+    <a href="#" id="changeDatesLink">Change expiration dates instead</a>
+  </div>
+</div>
 
 <canvas id="canvas" hidden></canvas>
 
@@ -361,8 +449,91 @@
   $("addName").addEventListener("keydown", function (e) { if (e.key === "Enter") manualAdd(); });
 
   // ---- pantry panel ----------------------------------------------------
+  var editingExpiring = false;
+  var pendingExpiringCount = 0;
+
+  function daysBadgeText(daysLeft) {
+    return daysLeft < 0 ? "expired"
+      : daysLeft === 0 ? "today" : daysLeft + "d left";
+  }
+
+  function makeItemCard(item, opts) {
+    opts = opts || {};
+    var card = document.createElement("div");
+    card.className = "card" + (opts.editing ? " editing" : "");
+    card.innerHTML =
+      '<div class="info"><div class="name"></div><div class="meta"></div></div>' +
+      '<span class="badge"></span>' +
+      '<div class="exp-edit"><input type="date"><button class="save-exp" type="button">Save</button></div>' +
+      '<button class="rm" type="button">✕</button>';
+    card.querySelector(".name").textContent =
+      item.name + (item.quantity > 1 ? " ×" + item.quantity : "");
+    card.querySelector(".meta").textContent = item.category;
+    var badge = card.querySelector(".badge");
+    badge.textContent = daysBadgeText(item.days_left);
+    if (item.days_left <= 2) badge.className = "badge warn";
+    var dateInput = card.querySelector('input[type="date"]');
+    dateInput.value = item.expires_on || "";
+    card.querySelector(".rm").addEventListener("click", function () {
+      api("/api/remove", { name: item.name }).then(function () {
+        api("/api/pantry").then(renderPantry);
+      });
+    });
+    card.querySelector(".save-exp").addEventListener("click", function () {
+      var btn = this;
+      var next = dateInput.value;
+      if (!next || next === item.expires_on) return;
+      btn.disabled = true;
+      api("/api/update-expiration", {
+        name: item.name,
+        expires_on: item.expires_on,
+        new_expires_on: next
+      }).then(renderPantry).catch(function (err) {
+        btn.disabled = false;
+        setStatus("Couldn't update date: " + err.message, "bad");
+      });
+    });
+    return card;
+  }
+
+  function setEditingExpiring(on) {
+    editingExpiring = !!on;
+    $("editExpiringBar").classList.toggle("visible", editingExpiring);
+  }
+
+  function closeConfirmModal() {
+    $("modalOverlay").classList.remove("open");
+  }
+
+  function openConfirmModal(count) {
+    pendingExpiringCount = count;
+    var noun = count === 1 ? "item" : "items";
+    $("confirmMessage").textContent =
+      "This will delete " + count + " " + noun +
+      " from your pantry. are you sure you want to do this?";
+    $("modalOverlay").classList.add("open");
+  }
+
   function renderPantry(data) {
     setCount(data.count);
+    var due = data.expiring_soon || [];
+    var deleteBtn = $("deleteExpiringBtn");
+    deleteBtn.hidden = due.length === 0;
+    deleteBtn.disabled = due.length === 0;
+
+    var expiringList = $("expiringList");
+    expiringList.innerHTML = "";
+    if (!due.length) {
+      setEditingExpiring(false);
+      expiringList.innerHTML =
+        '<div id="expiringEmpty">Nothing expiring in the next ' +
+        (data.expiring_soon_days || 3) + ' day(s).</div>';
+    } else {
+      due.forEach(function (item) {
+        expiringList.appendChild(makeItemCard(item, { editing: editingExpiring }));
+      });
+    }
+
     var list = $("pantryList");
     list.innerHTML = "";
     if (!data.items.length) {
@@ -370,34 +541,69 @@
       return;
     }
     data.items.forEach(function (item) {
-      var card = document.createElement("div");
-      card.className = "card";
-      card.innerHTML =
-        '<div class="info"><div class="name"></div><div class="meta"></div></div>' +
-        '<span class="badge"></span><button class="rm">✕</button>';
-      card.querySelector(".name").textContent =
-        item.name + (item.quantity > 1 ? " ×" + item.quantity : "");
-      card.querySelector(".meta").textContent = item.category;
-      var badge = card.querySelector(".badge");
-      badge.textContent = item.days_left < 0 ? "expired"
-        : item.days_left === 0 ? "today" : item.days_left + "d left";
-      if (item.days_left <= 2) badge.className = "badge warn";
-      card.querySelector(".rm").addEventListener("click", function () {
-        api("/api/remove", { name: item.name }).then(function () {
-          api("/api/pantry").then(renderPantry);
-        });
-      });
-      list.appendChild(card);
+      list.appendChild(makeItemCard(item, { editing: false }));
     });
   }
+
+  $("deleteExpiringBtn").addEventListener("click", function () {
+    api("/api/pantry").then(function (data) {
+      var count = (data.expiring_soon || []).length;
+      if (!count) {
+        renderPantry(data);
+        return;
+      }
+      openConfirmModal(count);
+    });
+  });
+
+  $("confirmCancel").addEventListener("click", closeConfirmModal);
+  $("modalOverlay").addEventListener("click", function (e) {
+    if (e.target === this) closeConfirmModal();
+  });
+
+  $("confirmDelete").addEventListener("click", function () {
+    var btn = this;
+    btn.disabled = true;
+    api("/api/remove-expiring", {}).then(function (data) {
+      closeConfirmModal();
+      setEditingExpiring(false);
+      setCount(data.pantry_count);
+      setStatus(
+        "Removed " + data.removed + " expiring " +
+        (data.removed === 1 ? "item" : "items") + ".",
+        "good"
+      );
+      return api("/api/pantry").then(renderPantry);
+    }).catch(function (err) {
+      setStatus("Delete failed: " + err.message, "bad");
+    }).finally(function () {
+      btn.disabled = false;
+    });
+  });
+
+  $("changeDatesLink").addEventListener("click", function (e) {
+    e.preventDefault();
+    closeConfirmModal();
+    setEditingExpiring(true);
+    api("/api/pantry").then(renderPantry);
+  });
+
+  $("doneEditingBtn").addEventListener("click", function () {
+    setEditingExpiring(false);
+    api("/api/pantry").then(renderPantry);
+  });
 
   $("pantryBtn").addEventListener("click", function () {
     var showing = document.body.classList.toggle("show-pantry");
     this.blur();
-    if (showing) api("/api/pantry").then(renderPantry).catch(function (err) {
-      $("pantryList").innerHTML = "";
-      setStatus("Couldn't load pantry: " + err.message, "bad");
-    });
+    if (showing) {
+      setEditingExpiring(false);
+      api("/api/pantry").then(renderPantry).catch(function (err) {
+        $("pantryList").innerHTML = "";
+        $("expiringList").innerHTML = "";
+        setStatus("Couldn't load pantry: " + err.message, "bad");
+      });
+    }
   });
 
   // ---- boot ------------------------------------------------------------
