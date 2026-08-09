@@ -143,24 +143,28 @@ so you know when something you're about to run out of is on sale:
 ```bash
 lettuceremind deals                  # this week's deals at all four stores
 lettuceremind deals publix           # one store (kroger, "whole foods", costco)
-lettuceremind deals --pantry         # only deals on items you currently have
+lettuceremind deals --pantry         # only deals on items currently in your pantry
+lettuceremind deals --zip 32081      # live Publix weekly ad near a ZIP
+lettuceremind deals --zip 32081 --refresh   # save that ad into deals.json
 ```
 
 ```
-💸 Local deals for 2026-07-08 — Publix, Kroger, Whole Foods, Costco
+💸 Local deals for 2026-08-09 — Publix, Kroger, Whole Foods, Costco
 
   Publix
-    strawberries — 16 oz   BOGO $4.99   thru Jul 14  ← in your pantry, expires in 2d — restock
-    avocado — each         $1.25        (reg $2.00)  thru Jul 14
+    strawberries — 6 or 16 oz   BOGO         thru Aug 12  ← in your pantry, expires in 2d — restock
+    avocado — Florida tropical  2 for $5.00  thru Aug 12
     ...
 ```
 
 Grocery circulars rotate Wednesday→Tuesday; Costco's savings run per
-calendar month. Because the app is offline and none of these chains offer a
-free public deals API, the built-in catalog is **representative sample
-circular data** that rotates deterministically each week — the plumbing for
-real data is there: drop a JSON feed at `~/.lettuceremind/deals.json` (or
-point `$LETTUCEREMIND_DEALS` at one) and it's merged in on top:
+calendar month. Publix deals come from the same store-scoped weekly ad that
+[Publix-Discount-Detector](https://github.com/jhustln/Publix-Discount-Detector)
+scrapes — LettuceRemind talks to Publix's public services API directly
+(stdlib only). The built-in Publix catalog is a **ZIP 32081** snapshot
+(Nocatee Town Center); `--zip` / `--refresh` replace it with the live
+circular. For other chains, drop a JSON feed at `~/.lettuceremind/deals.json`
+(or point `$LETTUCEREMIND_DEALS` at one):
 
 ```json
 {"deals": [{"store": "kroger", "item": "milk", "price": "$1.99",
@@ -169,7 +173,8 @@ point `$LETTUCEREMIND_DEALS` at one) and it's merged in on top:
 ```
 
 Expired or malformed entries are skipped; `item` is matched against the
-product database so pantry cross-referencing keeps working.
+product database so pantry cross-referencing keeps working. When the feed
+already has deals for a store, that store's built-in catalog is skipped.
 
 ## 👤 Accounts (login & registration)
 
@@ -220,6 +225,7 @@ Key modules:
 | `lettuceremind/store.py` | JSON pantry persistence (per-user aware) |
 | `lettuceremind/reminders.py` | expiration reminders |
 | `lettuceremind/deals.py` | local deals: Publix, Kroger, Whole Foods, Costco |
+| `lettuceremind/publix.py` | live Publix weekly ad by ZIP (default 32081) |
 | `lettuceremind/web/recognize.py` | pantry-photo OCR text → confident food matches |
 | `lettuceremind/web/server.py` | pantry-scanner web server (`lettuceremind serve`) |
 | `lettuceremind/web/static/app.html` | the mobile single-page app |

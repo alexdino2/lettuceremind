@@ -1,15 +1,22 @@
 """Local grocery deals for Publix, Kroger, Whole Foods, and Costco.
 
-The app is offline and dependency-free, and none of these chains publish a
-free deals API — so this module ships a built-in catalog of representative
-circular deals per store that rotates deterministically: a Wednesday-to-
-Tuesday window for the grocery chains (circulars flip on Wednesday) and a
-calendar-month window for Costco's savings book. The same date always shows
-the same deals.
+The app is offline and dependency-free. Kroger / Whole Foods / Costco ship
+a built-in catalog of representative circular deals that rotates
+deterministically: a Wednesday-to-Tuesday window for the grocery chains
+(circulars flip on Wednesday) and a calendar-month window for Costco's
+savings book. The same date always shows the same deals.
 
-Real circular data can be plugged in without touching code: drop a JSON
-feed at ``~/.lettuceremind/deals.json`` (or point ``$LETTUCEREMIND_DEALS``
-at one) and its entries are merged in on top of the built-ins::
+Publix is different: live weekly-ad data is available by ZIP via Publix's
+public services API (the same store-scoped circular
+https://github.com/jhustln/Publix-Discount-Detector scrapes). Run
+``lettuceremind deals --zip 32081 --refresh`` to pull the nearest store's
+ad into ``~/.lettuceremind/deals.json``. The built-in Publix catalog is a
+snapshot of ZIP 32081 (Nocatee Town Center) used when no live feed is
+present.
+
+You can also drop any JSON feed at ``~/.lettuceremind/deals.json`` (or
+point ``$LETTUCEREMIND_DEALS`` at one); its entries are merged in, and
+built-ins for a store are skipped when the feed already has that store::
 
     {"deals": [{"store": "kroger", "item": "milk", "price": "$1.99",
                 "regular_price": "$3.49", "description": "gallon",
@@ -75,7 +82,7 @@ class Deal:
     regular_price: Optional[str]
     valid_from: date
     valid_to: date
-    source: str = "builtin"  # "builtin" or "custom"
+    source: str = "builtin"  # "builtin", "custom", or "publix"
 
     @property
     def store_name(self) -> str:
@@ -84,20 +91,24 @@ class Deal:
 
 # (item, description, price, regular_price) — items must resolve exactly in
 # FOOD_DB (enforced by tests) so pantry cross-referencing always works.
+#
+# Publix entries are a snapshot of the ZIP 32081 (Nocatee Town Center,
+# store 01243) weekly ad for the week of 2026-08-06. Refresh with
+# ``lettuceremind deals --zip 32081 --refresh`` for the live circular.
 BUILTIN_CATALOG: dict[str, tuple[tuple[str, str, str, Optional[str]], ...]] = {
     "publix": (
-        ("strawberries", "16 oz", "BOGO $4.99", None),
-        ("chicken breast", "boneless skinless, family pack", "$2.99/lb", "$5.49/lb"),
-        ("greek yogurt", "32 oz tub", "BOGO $5.99", None),
-        ("avocado", "each", "$1.25", "$2.00"),
-        ("ground beef", "80/20", "$3.99/lb", "$5.29/lb"),
-        ("orange juice", "52 oz", "BOGO $4.79", None),
-        ("bread", "bakery white or wheat", "$1.99", "$3.29"),
-        ("salsa", "16 oz jar", "BOGO $3.99", None),
-        ("ice cream", "48 oz", "BOGO $6.49", None),
-        ("deli turkey", "sliced fresh", "$7.99/lb", "$9.99/lb"),
-        ("blueberries", "pint", "2 for $6", "$4.29 ea"),
-        ("bell peppers", "tri-color 3 pack", "$2.99", "$4.49"),
+        ("chicken breast", "18–20 oz boneless skinless", "BOGO", None),
+        ("strawberries", "6 or 16 oz", "BOGO", None),
+        ("yogurt", "32 oz tub", "BOGO", None),
+        ("avocado", "Florida tropical, each", "2 for $5.00", None),
+        ("ground beef", "chuck, 3 lb+", "$7.99/lb", None),
+        ("apples", "Honeycrisp, 2 lb pouch", "BOGO", None),
+        ("bread", "Nature's Own Hawaiian", "BOGO", None),
+        ("bacon", "12 or 16 oz", "2 for $10.00", None),
+        ("spinach", "9 oz", "2 for $4.00", None),
+        ("eggs", "dozen free-range large", "BOGO", None),
+        ("grapes", "red or white seedless", "$2.99/lb", None),
+        ("deli turkey", "oven-roasted, sliced", "$9.99/lb", None),
     ),
     "kroger": (
         ("milk", "gallon, with card", "$2.49", "$3.79"),
@@ -235,9 +246,21 @@ def custom_deals(today: date, stores: Optional[list[str]] = None) -> list[Deal]:
 def current_deals(today: Optional[date] = None,
                   stores: Optional[list[str]] = None) -> list[Deal]:
     """All deals valid on ``today``: the built-in rotation plus any custom
-    feed entries, for the requested stores (default: all four)."""
+    feed entries, for the requested stores (default: all four).
+
+    When the custom feed already has entries for a store, that store's
+    built-in sample catalog is skipped so live Publix (or other) data
+    replaces the snapshot instead of duplicating it.
+    """
     today = today or date.today()
-    return builtin_deals(today, stores) + custom_deals(today, stores)
+    custom = custom_deals(today, stores)
+    custom_stores = {d.store for d in custom}
+    builtin_stores = [
+        key for key in (stores or list(STORES))
+        if key not in custom_stores
+    ]
+    builtin = builtin_deals(today, builtin_stores) if builtin_stores else []
+    return builtin + custom
 
 
 def match_pantry(deals: list[Deal], pantry_items: list[PantryItem],
