@@ -44,9 +44,13 @@ from lettuceremind.deals import (
 from lettuceremind.models import PantryItem
 from lettuceremind.publix import DEFAULT_ZIP, refresh_feed
 from lettuceremind.receipt.matcher import FoodMatcher
+from lettuceremind.reminders import expiring_soon
 from lettuceremind.shelf_life import shelf_life_for
 from lettuceremind.store import PantryStore
 from lettuceremind.web import recognize
+
+#: Default window (days) for the web "expiring soon" panel — matches CLI.
+EXPIRING_SOON_DAYS = 3
 
 DEFAULT_PORT = 8043
 
@@ -96,7 +100,13 @@ class PantryScanApp:
 
     def pantry(self) -> dict:
         items = sorted(self._store().all(), key=lambda i: i.expires_on)
-        return {"items": [self._item_dict(i) for i in items], "count": len(items)}
+        due = expiring_soon(items, within_days=EXPIRING_SOON_DAYS)
+        return {
+            "items": [self._item_dict(i) for i in items],
+            "expiring_soon": [self._item_dict(i) for i in due],
+            "expiring_soon_days": EXPIRING_SOON_DAYS,
+            "count": len(items),
+        }
 
     def scan(self, payload: dict) -> dict:
         """Recognize foods in one camera frame and add the new ones."""
@@ -195,6 +205,58 @@ class PantryScanApp:
             }
             count = len(store.all())
         return {"removed": removed, "pantry_count": count}
+
+    def remove_expiring(self, payload: dict) -> dict:
+        """Delete every item in the expiring-soon window."""
+        try:
+            days = int(payload.get("days", EXPIRING_SOON_DAYS))
+        except (TypeError, ValueError):
+            raise ApiError(400, "'days' must be an integer") from None
+        if days < 0:
+            raise ApiError(400, "'days' must be >= 0")
+        with self._lock:
+            store = self._store()
+            removed = store.remove_expiring(within_days=days)
+            # Forget dedupe entries so cleared foods can be re-scanned.
+            remaining = {i.name.lower() for i in store.all()}
+            self._recent = {
+                n: t for n, t in self._recent.items() if n.lower() in remaining
+            }
+            count = len(store.all())
+        return {"removed": removed, "pantry_count": count}
+
+    def update_expiration(self, payload: dict) -> dict:
+        """Change one item's expiration date (alternative to deleting it)."""
+        name = str(payload.get("name") or "").strip()
+        expires_on = str(payload.get("expires_on") or "").strip()
+        new_expires_on = str(payload.get("new_expires_on") or "").strip()
+        if not name:
+            raise ApiError(400, "missing 'name'")
+        if not expires_on:
+            raise ApiError(400, "missing 'expires_on'")
+        if not new_expires_on:
+            raise ApiError(400, "missing 'new_expires_on'")
+        try:
+            date.fromisoformat(expires_on)
+            date.fromisoformat(new_expires_on)
+        except ValueError:
+            raise ApiError(400, "dates must be YYYY-MM-DD") from None
+        with self._lock:
+            store = self._store()
+            updated = store.update_expiration(name, expires_on, new_expires_on)
+            if not updated:
+                raise ApiError(404, "item not found")
+            # Return the refreshed pantry so the UI can re-render.
+            items = sorted(store.all(), key=lambda i: i.expires_on)
+            due = expiring_soon(items, within_days=EXPIRING_SOON_DAYS)
+        return {
+            "updated": updated,
+            "items": [self._item_dict(i) for i in items],
+            "expiring_soon": [self._item_dict(i) for i in due],
+            "expiring_soon_days": EXPIRING_SOON_DAYS,
+            "count": len(items),
+            "pantry_count": len(items),
+        }
 
     @staticmethod
     def _deal_dict(deal, pantry_item: Optional[PantryItem] = None) -> dict:
@@ -407,6 +469,8 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/scan": self.app.scan,
             "/api/add": self.app.add,
             "/api/remove": self.app.remove,
+            "/api/remove-expiring": self.app.remove_expiring,
+            "/api/update-expiration": self.app.update_expiration,
             "/api/deals/refresh": self.app.refresh_deals,
         }
         handler = routes.get(path)

@@ -30,6 +30,28 @@ def test_store_remove_and_clear(tmp_path):
     assert store.clear() == 1
 
 
+def test_store_remove_expiring_keeps_fresh_items(tmp_path):
+    today = date(2026, 7, 1)
+    store = PantryStore(tmp_path / "p.json")
+    store.add_all([
+        make_item("milk", days_out=1, today=today),
+        make_item("eggs", days_out=10, today=today),
+        make_item("spinach", days_out=-1, today=today),
+    ])
+    assert store.remove_expiring(within_days=3, today=today) == 2
+    assert [i.name for i in store.all()] == ["eggs"]
+
+
+def test_store_update_expiration(tmp_path):
+    today = date(2026, 7, 1)
+    store = PantryStore(tmp_path / "p.json")
+    store.add(make_item("milk", days_out=2, today=today))
+    old = store.all()[0].expires_on.isoformat()
+    assert store.update_expiration("milk", old, "2026-08-01") == 1
+    assert store.all()[0].expires_on.isoformat() == "2026-08-01"
+    assert store.update_expiration("milk", old, "2026-09-01") == 0
+
+
 def test_store_survives_corrupt_file(tmp_path):
     path = tmp_path / "pantry.json"
     path.write_text("{not json!!", encoding="utf-8")

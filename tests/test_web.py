@@ -140,11 +140,79 @@ def test_manual_add_and_remove(app):
     assert app.pantry()["count"] == 0
 
 
+def test_pantry_includes_expiring_soon(app):
+    from datetime import date, timedelta
+    from lettuceremind.models import PantryItem
+    from lettuceremind.store import PantryStore
+
+    today = date.today()
+    store = PantryStore(app.store_path)
+    store.add_all([
+        PantryItem("milk", "milk & cream", 1, today, today + timedelta(days=1)),
+        PantryItem("rice", "grains", 1, today, today + timedelta(days=30)),
+        PantryItem("spinach", "leafy greens", 1, today, today - timedelta(days=1)),
+    ])
+
+    result = app.pantry()
+    assert result["count"] == 3
+    assert result["expiring_soon_days"] == 3
+    assert [i["name"] for i in result["expiring_soon"]] == ["spinach", "milk"]
+
+
+def test_remove_expiring_and_update_expiration(app):
+    from datetime import date, timedelta
+    from lettuceremind.models import PantryItem
+    from lettuceremind.store import PantryStore
+
+    today = date.today()
+    store = PantryStore(app.store_path)
+    store.add_all([
+        PantryItem("milk", "milk & cream", 1, today, today + timedelta(days=1)),
+        PantryItem("rice", "grains", 1, today, today + timedelta(days=30)),
+    ])
+    milk_exp = (today + timedelta(days=1)).isoformat()
+    updated = app.update_expiration({
+        "name": "milk",
+        "expires_on": milk_exp,
+        "new_expires_on": (today + timedelta(days=14)).isoformat(),
+    })
+    assert updated["updated"] == 1
+    assert updated["expiring_soon"] == []
+    assert updated["count"] == 2
+
+    # Put milk back in the expiring window, then clear it.
+    app.update_expiration({
+        "name": "milk",
+        "expires_on": (today + timedelta(days=14)).isoformat(),
+        "new_expires_on": milk_exp,
+    })
+    cleared = app.remove_expiring({})
+    assert cleared["removed"] == 1
+    assert cleared["pantry_count"] == 1
+    assert app.pantry()["items"][0]["name"] == "rice"
+
+
 def test_manual_add_validates_input(app):
     with pytest.raises(ApiError):
         app.add({"name": "   "})
     with pytest.raises(ApiError):
         app.add({"name": "milk", "quantity": "lots"})
+
+
+def test_remove_expiring_validates_days(app):
+    with pytest.raises(ApiError) as exc:
+        app.remove_expiring({"days": "soon"})
+    assert exc.value.status == 400
+
+
+def test_update_expiration_not_found(app):
+    with pytest.raises(ApiError) as exc:
+        app.update_expiration({
+            "name": "ghost",
+            "expires_on": "2026-01-01",
+            "new_expires_on": "2026-02-01",
+        })
+    assert exc.value.status == 404
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +253,15 @@ def test_page_requires_key_and_serves_app(server):
     with pytest.raises(urllib.error.HTTPError) as exc:
         _request(f"{server}/", key=None)
     assert exc.value.code == 401
+
+
+def test_page_includes_expiring_soon_controls(server):
+    status, body, ctype = _request(f"{server}/?key=sesame", key=None)
+    assert status == 200
+    assert b"Expiring soon" in body
+    assert b"deleteExpiringBtn" in body
+    assert b"changeDatesLink" in body
+    assert b"This will delete" in body
 
 
 def test_api_end_to_end_over_http(server):
