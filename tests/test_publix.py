@@ -48,8 +48,20 @@ SAVINGS_PAYLOAD = {
             "savingType": "WeeklyAd",
             "title": "Just Bare Chicken Breast Fillets",
             "savings": "Buy 1 Get 1 FREE",
+            "additionalDealInfo": "SAVE UP TO $8.50",
             "description": "Boneless, Skinless, 18 or 20-oz pkg.",
             "department": "Meat",
+            "recommendedRank": 1,
+            "wa_startDate": "2026-08-06T00:00:00Z",
+            "wa_endDate": "2026-08-12T23:59:59Z",
+        },
+        {
+            "savingType": "WeeklyAd",
+            "title": "Just Bare Lightly Breaded Chicken Breast",
+            "savings": "Buy 1 Get 1 FREE",
+            "description": "Bites, Strips, or Fillets; Sold Frozen, 19.2 or 24-oz pkg.",
+            "department": "Frozen Meat",
+            "recommendedRank": 40,
             "wa_startDate": "2026-08-06T00:00:00Z",
             "wa_endDate": "2026-08-12T23:59:59Z",
         },
@@ -114,9 +126,11 @@ def test_find_store_rejects_bad_zip():
 def test_fetch_weekly_ad_filters_digital_coupons():
     with patch("lettuceremind.publix._get_json", side_effect=_fake_get_json):
         raw = fetch_weekly_ad("01243")
-    assert len(raw) == 3
+    assert len(raw) == 4
     assert all(isinstance(r, RawPublixDeal) for r in raw)
-    assert raw[0].savings == "BOGO"
+    fillets = next(r for r in raw if "Fillets" in r.title)
+    assert fillets.savings == "BOGO · Save up to $8.50"
+    assert fillets.recommended_rank == 1
 
 
 def test_map_to_deals_matches_food_db():
@@ -131,18 +145,50 @@ def test_map_to_deals_matches_food_db():
         ),
         RawPublixDeal(
             title="Just Bare Chicken Breast Fillets",
-            savings="BOGO",
+            savings="BOGO · Save up to $8.50",
             description="18 or 20-oz pkg.",
             department="Meat",
             valid_from=date(2026, 8, 6),
             valid_to=date(2026, 8, 12),
+            recommended_rank=1,
         ),
     ]
     deals = map_to_deals(raw)
     items = {d.item for d in deals}
     assert "strawberries" in items
     assert "chicken breast" in items
+    chicken = next(d for d in deals if d.item == "chicken breast")
+    assert "Just Bare Chicken Breast Fillets" in chicken.description
+    assert "Save up to $8.50" in chicken.price
     assert all(d.store == "publix" and d.source == "publix" for d in deals)
+
+
+def test_map_prefers_featured_fillets_over_breaded_variant():
+    raw = [
+        RawPublixDeal(
+            title="Just Bare Lightly Breaded Chicken Breast",
+            savings="BOGO",
+            description="Bites, Strips, or Fillets; Sold Frozen, 19.2 or 24-oz pkg.",
+            department="Frozen Meat",
+            valid_from=date(2026, 8, 6),
+            valid_to=date(2026, 8, 12),
+            recommended_rank=40,
+        ),
+        RawPublixDeal(
+            title="Just Bare Chicken Breast Fillets",
+            savings="BOGO · Save up to $8.50",
+            description="Boneless, Skinless, 18 or 20-oz pkg.",
+            department="Meat",
+            valid_from=date(2026, 8, 6),
+            valid_to=date(2026, 8, 12),
+            recommended_rank=1,
+        ),
+    ]
+    deals = map_to_deals(raw)
+    chicken = next(d for d in deals if d.item == "chicken breast")
+    assert "Fillets" in chicken.description
+    assert "19.2 or 24-oz" not in chicken.description
+    assert "Save up to $8.50" in chicken.price
 
 
 def test_deals_for_zip_end_to_end():
@@ -150,6 +196,9 @@ def test_deals_for_zip_end_to_end():
         store, deals = deals_for_zip("32081")
     assert store.number == "01243"
     assert {d.item for d in deals} >= {"strawberries", "chicken breast", "ground beef"}
+    chicken = next(d for d in deals if d.item == "chicken breast")
+    assert "Fillets" in chicken.description
+    assert "Save up to $8.50" in chicken.price
 
 
 def test_refresh_feed_writes_publix_and_preserves_other_stores(isolated_home, monkeypatch):
@@ -174,7 +223,7 @@ def test_refresh_feed_writes_publix_and_preserves_other_stores(isolated_home, mo
     # Live Publix feed replaces the built-in Publix snapshot.
     shown = current_deals(today=date(2026, 8, 9), stores=["publix", "kroger"])
     assert {d.store for d in shown} == {"publix", "kroger"}
-    assert all(d.source == "custom" for d in shown if d.store == "publix")
+    assert all(d.source == "publix" for d in shown if d.store == "publix")
     assert any(d.item == "milk" and d.source == "custom" for d in shown)
 
 

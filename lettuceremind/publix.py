@@ -90,6 +90,8 @@ class RawPublixDeal:
     department: str
     valid_from: date
     valid_to: date
+    additional_info: str = ""  # e.g. "Save up to $8.50"
+    recommended_rank: Optional[int] = None
 
 
 def _get_json(url: str, headers: Optional[dict[str, str]] = None) -> Any:
@@ -183,9 +185,19 @@ def fetch_weekly_ad(store_number: str) -> list[RawPublixDeal]:
             continue
         savings = html.unescape(str(row.get("savings") or "")).strip()
         savings = _normalize_price(savings)
+        extra = html.unescape(str(row.get("additionalDealInfo") or "")).strip()
+        if extra:
+            pretty = extra[:1].upper() + extra[1:].lower()
+            if pretty.lower() not in savings.lower():
+                savings = f"{savings} · {pretty}"
         desc = html.unescape(str(row.get("description") or "")).strip()
-        desc = re.sub(r"\s+", " ", desc.replace("\r\n", " "))
+        desc = re.sub(r"\s+", " ", desc.replace("\r\n", " ").replace("&#13;&#10;", " "))
         dept = html.unescape(str(row.get("department") or "")).replace("&amp;", "&")
+        rank_raw = row.get("recommendedRank")
+        try:
+            rank = int(rank_raw) if rank_raw is not None else None
+        except (TypeError, ValueError):
+            rank = None
         out.append(RawPublixDeal(
             title=title,
             savings=savings,
@@ -193,6 +205,8 @@ def fetch_weekly_ad(store_number: str) -> list[RawPublixDeal]:
             department=dept,
             valid_from=_parse_day(row.get("wa_startDate"), today),
             valid_to=_parse_day(row.get("wa_endDate"), today),
+            additional_info=extra,
+            recommended_rank=rank,
         ))
     return out
 
@@ -205,8 +219,9 @@ def _normalize_price(savings: str) -> str:
 
 
 def _size_blurb(raw: RawPublixDeal) -> str:
-    for part in re.split(r"[.\n]", raw.description):
-        part = part.strip()
+    # Split on ". " / newlines — not bare "." — so "19.2 oz" stays intact.
+    for part in re.split(r"(?:\.\s+|\n)+", raw.description or ""):
+        part = part.strip(" .")
         if (
             part
             and re.search(r"\d", part)
@@ -215,6 +230,22 @@ def _size_blurb(raw: RawPublixDeal) -> str:
         ):
             return part
     return raw.department or raw.title
+
+
+def _deal_description(raw: RawPublixDeal, food_name: str) -> str:
+    """Prefer the weekly-ad title so branded items stay recognizable."""
+    title = raw.title.strip()
+    blurb = _size_blurb(raw)
+    if title and title.lower() != food_name.lower():
+        if (
+            blurb
+            and blurb.lower() not in title.lower()
+            and blurb.lower() != (raw.department or "").lower()
+            and len(blurb) <= 48
+        ):
+            return f"{title} — {blurb}"
+        return title
+    return blurb
 
 
 _FRESH_DEPTS = frozenset({
@@ -276,11 +307,21 @@ def map_to_deals(
         if not raw.savings:
             continue
         title_l = raw.title.lower()
-        # Prefer titles that actually contain the food name / a key word.
+        name_l = name.lower()
+        # Prefer the featured circular item (recommendedRank) and titles
+        # that literally contain the food name as a phrase — so
+        # "Just Bare Chicken Breast Fillets" beats breaded/canned variants
+        # that only win on a stronger matcher method.
         name_hit = 0 if name.split()[0] in title_l else 1
+        contiguous = 0 if name_l in title_l else 1
+        extra_words = max(0, len(title_l.split()) - len(name_l.split()))
+        rank = raw.recommended_rank if raw.recommended_rank is not None else 999
         sort_key = (
             preferred.get(name, 1000),
             _department_penalty(raw.department),
+            rank,
+            contiguous,
+            extra_words,
             method_rank.get(result.method, 9),
             name_hit,
             -result.confidence,
@@ -288,7 +329,7 @@ def map_to_deals(
         deal = Deal(
             store="publix",
             item=name,
-            description=_size_blurb(raw),
+            description=_deal_description(raw, name),
             price=raw.savings,
             regular_price=None,
             valid_from=raw.valid_from,
@@ -354,6 +395,7 @@ def refresh_feed(
             "regular_price": d.regular_price,
             "valid_from": d.valid_from.isoformat(),
             "valid_to": d.valid_to.isoformat(),
+            "source": "publix",
             "zip": zip_code,
             "store_number": store.number,
             "store_name": store.name,

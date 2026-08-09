@@ -23,10 +23,12 @@
   }
   header h1 { font-size: 17px; font-weight: 700; }
   header h1 small { display: block; font-size: 11px; font-weight: 400; opacity: .75; }
-  #pantryBtn {
+  .nav { display: flex; gap: 8px; }
+  .nav-btn {
     background: rgba(255,255,255,.14); color: inherit; border: 0;
     border-radius: 999px; padding: 8px 14px; font-size: 13px; font-weight: 600;
   }
+  .nav-btn.on { background: #2e9e52; }
   main { padding: 14px; max-width: 480px; margin: 0 auto; }
 
   /* camera stage */
@@ -118,9 +120,43 @@
     padding: 0 18px; font-size: 15px; font-weight: 700;
   }
 
-  #pantryPanel { display: none; }
-  body.show-pantry #scannerPanel { display: none; }
+  #pantryPanel, #dealsPanel { display: none; }
+  body.show-pantry #scannerPanel,
+  body.show-deals #scannerPanel { display: none; }
   body.show-pantry #pantryPanel { display: block; }
+  body.show-deals #dealsPanel { display: block; }
+
+  .deals-toolbar {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    margin-bottom: 12px;
+  }
+  .deals-toolbar input {
+    width: 88px; border: 1px solid #2c5238; background: #0f2b19; color: inherit;
+    border-radius: 12px; padding: 10px 12px; font-size: 15px;
+  }
+  .deals-toolbar button, .chip {
+    border: 0; border-radius: 12px; padding: 10px 14px;
+    font-size: 13px; font-weight: 700; color: #fff; background: #2e9e52;
+  }
+  .chip {
+    background: rgba(255,255,255,.1); color: #d9ecdd; font-weight: 600;
+  }
+  .chip.on { background: #2e9e52; color: #fff; }
+  .deals-note {
+    font-size: 12.5px; line-height: 1.45; color: #a9cbb1;
+    margin: 0 0 12px; padding: 10px 12px; background: #12301a;
+    border-radius: 12px; border: 1px solid #244c32;
+  }
+  .deal-card .price {
+    font-size: 13px; font-weight: 800; color: #9df0b4; white-space: nowrap;
+    text-align: right;
+  }
+  .deal-card .price small {
+    display: block; font-size: 10px; font-weight: 600; color: #9dbfa6; margin-top: 2px;
+  }
+  .deal-card .meta .tag {
+    color: #8df0a8;
+  }
 
   .panel-head {
     display: flex; align-items: center; justify-content: space-between;
@@ -192,7 +228,10 @@
 <body>
 <header>
   <h1>🥬 LettuceRemind<small>Pantry Scanner</small></h1>
-  <button id="pantryBtn">Pantry (…)</button>
+  <div class="nav">
+    <button class="nav-btn" id="dealsBtn" type="button">Deals</button>
+    <button class="nav-btn" id="pantryBtn" type="button">Pantry (…)</button>
+  </div>
 </header>
 
 <main>
@@ -227,6 +266,17 @@
       <input id="addName" placeholder='e.g. "greek yogurt"' autocomplete="off" enterkeyhint="done">
       <button id="addBtn">Add</button>
     </div>
+  </section>
+
+  <section id="dealsPanel">
+    <h2>Local deals</h2>
+    <div class="deals-toolbar">
+      <input id="zipInput" inputmode="numeric" maxlength="5" placeholder="ZIP" aria-label="ZIP code">
+      <button id="refreshDealsBtn" type="button">Refresh Publix</button>
+      <button class="chip" id="pantryDealsChip" type="button">In pantry</button>
+    </div>
+    <div id="dealsNote" class="deals-note" hidden></div>
+    <div id="dealsList"><div id="dealsEmpty">Loading deals…</div></div>
   </section>
 
   <section id="pantryPanel">
@@ -298,6 +348,22 @@
   function setCount(n) {
     if (typeof n === "number") pantryCount = n;
     $("pantryBtn").textContent = "Pantry (" + (pantryCount === null ? "…" : pantryCount) + ")";
+  }
+
+  function setView(view) {
+    document.body.classList.remove("show-pantry", "show-deals");
+    $("pantryBtn").classList.remove("on");
+    $("dealsBtn").classList.remove("on");
+    if (view !== "pantry" && typeof setEditingExpiring === "function") {
+      setEditingExpiring(false);
+    }
+    if (view === "pantry") {
+      document.body.classList.add("show-pantry");
+      $("pantryBtn").classList.add("on");
+    } else if (view === "deals") {
+      document.body.classList.add("show-deals");
+      $("dealsBtn").classList.add("on");
+    }
   }
 
   // ---- camera ----------------------------------------------------------
@@ -594,16 +660,154 @@
   });
 
   $("pantryBtn").addEventListener("click", function () {
-    var showing = document.body.classList.toggle("show-pantry");
+    var showing = document.body.classList.contains("show-pantry");
     this.blur();
     if (showing) {
       setEditingExpiring(false);
-      api("/api/pantry").then(renderPantry).catch(function (err) {
-        $("pantryList").innerHTML = "";
-        $("expiringList").innerHTML = "";
-        setStatus("Couldn't load pantry: " + err.message, "bad");
-      });
+      setView("scanner");
+      return;
     }
+    setView("pantry");
+    api("/api/pantry").then(renderPantry).catch(function (err) {
+      $("pantryList").innerHTML = "";
+      $("expiringList").innerHTML = "";
+      setStatus("Couldn't load pantry: " + err.message, "bad");
+    });
+  });
+
+  // ---- local deals -----------------------------------------------------
+  var pantryDealsOnly = false;
+
+  function sourceLabel(source) {
+    if (source === "publix") return "live Publix ad";
+    if (source === "custom") return "custom feed";
+    return "sample circular";
+  }
+
+  function fmtThru(iso) {
+    if (!iso) return "";
+    var d = new Date(iso + "T12:00:00");
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  function renderDeals(data) {
+    var note = $("dealsNote");
+    if (data.note) {
+      note.hidden = false;
+      note.textContent = data.note;
+    } else {
+      note.hidden = true;
+      note.textContent = "";
+    }
+    if (data.feed && data.feed.zip) $("zipInput").value = data.feed.zip;
+    else if (data.default_zip && !$("zipInput").value) $("zipInput").value = data.default_zip;
+
+    var list = $("dealsList");
+    list.innerHTML = "";
+    if (!data.deals || !data.deals.length) {
+      list.innerHTML = '<div id="dealsEmpty">No deals for today'
+        + (pantryDealsOnly ? " matching your pantry." : ".")
+        + "</div>";
+      return;
+    }
+
+    var groups = {};
+    data.deals.forEach(function (deal) {
+      (groups[deal.store] || (groups[deal.store] = [])).push(deal);
+    });
+    (data.stores || []).forEach(function (store) {
+      var deals = groups[store.key];
+      if (!deals || !deals.length) return;
+      var heading = document.createElement("h2");
+      heading.textContent = store.name;
+      list.appendChild(heading);
+      deals.forEach(function (deal) {
+        var card = document.createElement("div");
+        card.className = "card deal-card";
+        card.innerHTML =
+          '<div class="info"><div class="name"></div><div class="meta"></div></div>' +
+          '<div class="price"></div>';
+        card.querySelector(".name").textContent = deal.item;
+        var metaEl = card.querySelector(".meta");
+        metaEl.textContent = "";
+        var bits = [];
+        if (deal.description) bits.push(deal.description);
+        bits.push("thru " + fmtThru(deal.valid_to));
+        bits.push(sourceLabel(deal.source));
+        metaEl.appendChild(document.createTextNode(bits.join(" · ")));
+        if (deal.in_pantry) {
+          metaEl.appendChild(document.createTextNode(" · "));
+          var tag = document.createElement("span");
+          tag.className = "tag";
+          var pantryNote = "in pantry";
+          if (typeof deal.days_left === "number") {
+            if (deal.days_left < 0) pantryNote += " (expired)";
+            else if (deal.days_left === 0) pantryNote += ", expires today";
+            else pantryNote += ", " + deal.days_left + "d left";
+          }
+          tag.textContent = pantryNote;
+          metaEl.appendChild(tag);
+        }
+        var price = card.querySelector(".price");
+        price.textContent = deal.price;
+        if (deal.regular_price) {
+          var small = document.createElement("small");
+          small.textContent = "reg " + deal.regular_price;
+          price.appendChild(small);
+        }
+        list.appendChild(card);
+      });
+    });
+  }
+
+  function loadDeals() {
+    var q = pantryDealsOnly ? "?pantry=1" : "";
+    return api("/api/deals" + q).then(renderDeals);
+  }
+
+  $("dealsBtn").addEventListener("click", function () {
+    var showing = document.body.classList.contains("show-deals");
+    this.blur();
+    if (showing) {
+      setView("scanner");
+      return;
+    }
+    setView("deals");
+    $("dealsList").innerHTML = '<div id="dealsEmpty">Loading deals…</div>';
+    loadDeals().catch(function (err) {
+      $("dealsList").innerHTML = "";
+      setStatus("Couldn't load deals: " + err.message, "bad");
+    });
+  });
+
+  $("pantryDealsChip").addEventListener("click", function () {
+    pantryDealsOnly = !pantryDealsOnly;
+    this.classList.toggle("on", pantryDealsOnly);
+    loadDeals().catch(function (err) {
+      setStatus("Couldn't load deals: " + err.message, "bad");
+    });
+  });
+
+  $("refreshDealsBtn").addEventListener("click", function () {
+    var btn = this;
+    var zip = ($("zipInput").value || "").trim();
+    if (zip && !/^\d{5}$/.test(zip)) {
+      setStatus("ZIP must be 5 digits.", "bad");
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Refreshing…";
+    api("/api/deals/refresh", { zip: zip || undefined }).then(function (data) {
+      pantryDealsOnly = false;
+      $("pantryDealsChip").classList.remove("on");
+      renderDeals(data);
+      setStatus(data.note || "Publix deals refreshed.", "good");
+    }).catch(function (err) {
+      setStatus("Refresh failed: " + err.message, "bad");
+    }).finally(function () {
+      btn.disabled = false;
+      btn.textContent = "Refresh Publix";
+    });
   });
 
   // ---- boot ------------------------------------------------------------
