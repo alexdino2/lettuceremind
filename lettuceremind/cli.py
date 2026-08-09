@@ -12,7 +12,7 @@ from typing import Optional
 from lettuceremind import __version__, auth
 from lettuceremind.deals import STORES, current_deals, match_pantry, resolve_store
 from lettuceremind.models import PantryItem
-from lettuceremind.publix import DEFAULT_ZIP, deals_for_zip, refresh_feed
+from lettuceremind.publix import DEFAULT_ZIP, refresh_feed
 from lettuceremind.receipt.matcher import FoodMatcher
 from lettuceremind.receipt.scanner import ReceiptScanner
 from lettuceremind.reminders import expiring_soon, format_reminder
@@ -142,34 +142,14 @@ def cmd_deals(args: argparse.Namespace) -> int:
             return 1
         stores = ["publix"]
         try:
-            if args.refresh:
-                store, live_deals, path = refresh_feed(zip_code)
-                live_note = (
-                    f"  refreshed Publix from ZIP {zip_code} → "
-                    f"{store.name} #{store.number}\n"
-                    f"  wrote {len(live_deals)} deal(s) to {path}\n"
-                )
-            else:
-                store, live_deals = deals_for_zip(zip_code)
-                print(f"💸 Publix weekly ad near {zip_code} — "
-                      f"{store.name} #{store.number} "
-                      f"({store.city}, {store.state})\n")
-                if not live_deals:
-                    print("  No pantry-matchable deals found this week.")
-                    return 0
-                labels = {
-                    d: d.item + (f" — {d.description}" if d.description else "")
-                    for d in live_deals
-                }
-                width = max(len(label) for label in labels.values())
-                price_width = max(len(d.price) for d in live_deals)
-                for deal in live_deals:
-                    print(f"  {labels[deal]:<{width}}  "
-                          f"{deal.price:<{price_width}}  "
-                          f"thru {deal.valid_to.strftime('%b %d')}")
-                print("\n  (live weekly ad; pass --refresh to save into "
-                      "~/.lettuceremind/deals.json)")
-                return 0
+            # Always persist — the web Deals page reads deals.json, so a
+            # print-only --zip left the UI stuck on the built-in snapshot.
+            store, live_deals, path = refresh_feed(zip_code)
+            live_note = (
+                f"  refreshed Publix from ZIP {zip_code} → "
+                f"{store.name} #{store.number}\n"
+                f"  wrote {len(live_deals)} deal(s) to {path}\n"
+            )
         except (ValueError, RuntimeError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -365,11 +345,11 @@ def build_parser() -> argparse.ArgumentParser:
                          help="show deals as of DATE (default: today)")
     p_deals.add_argument(
         "--zip", metavar="ZIP", default=None,
-        help=f"fetch live Publix weekly ad near ZIP "
+        help="pull live Publix weekly ad near ZIP into ~/.lettuceremind/deals.json "
              f"(default with --refresh: {DEFAULT_ZIP})")
     p_deals.add_argument(
         "--refresh", action="store_true",
-        help="pull Publix weekly ad for --zip into ~/.lettuceremind/deals.json")
+        help="same as --zip (uses ZIP 32081 when --zip is omitted)")
     p_deals.set_defaults(func=cmd_deals)
 
     p_serve = sub.add_parser(

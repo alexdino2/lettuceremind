@@ -227,7 +227,8 @@ def test_refresh_feed_writes_publix_and_preserves_other_stores(isolated_home, mo
     assert any(d.item == "milk" and d.source == "custom" for d in shown)
 
 
-def test_cli_zip_lists_live_publix(capsys):
+def test_cli_zip_lists_live_publix(isolated_home, monkeypatch, capsys):
+    monkeypatch.setenv("LETTUCEREMIND_HOME", str(isolated_home))
     with patch("lettuceremind.publix._get_json", side_effect=_fake_get_json):
         rc = main(["deals", "--zip", "32081"])
     assert rc == 0
@@ -235,6 +236,16 @@ def test_cli_zip_lists_live_publix(capsys):
     assert "Nocatee Town Center" in out
     assert "strawberries" in out
     assert "chicken breast" in out
+    assert "refreshed Publix from ZIP 32081" in out
+    assert "Save up to $8.50" in out
+    # --zip must persist so the web Deals page is not stuck on builtins.
+    feed = isolated_home / "deals.json"
+    assert feed.exists()
+    data = json.loads(feed.read_text(encoding="utf-8"))
+    assert any(d["item"] == "chicken breast" for d in data["deals"])
+    shown = current_deals(today=date(2026, 8, 9), stores=["publix"])
+    assert all(d.source == "publix" for d in shown)
+    assert any("Fillets" in d.description for d in shown if d.item == "chicken breast")
 
 
 def test_cli_refresh_saves_feed(isolated_home, monkeypatch, capsys):

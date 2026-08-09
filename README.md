@@ -128,9 +128,9 @@ Open that URL in Safari and scan away. How it works:
   auto-scan** — pan slowly along the shelf and items roll in.
 - There's also a type-to-add box, a session feed with undo, a pantry view
   with per-item days-left badges and remove buttons, and a **Deals** tab
-  that lists this week's local grocery deals. Use **Refresh Publix** with
-  your ZIP to pull the live weekly ad into `~/.lettuceremind/deals.json`
-  (same feed the CLI uses).
+  (also at `/deals`) that lists this week's local grocery deals. Use
+  **Refresh Publix** with your ZIP to pull the live weekly ad into
+  `~/.lettuceremind/deals.json` (same feed the CLI uses).
 
 The server protects your pantry with a random access key baked into the
 printed URL (disable with `--no-key`), and uses the same pantry
@@ -148,8 +148,8 @@ in the phone app's **Deals** tab, or from the CLI:
 lettuceremind deals                  # this week's deals at all four stores
 lettuceremind deals publix           # one store (kroger, "whole foods", costco)
 lettuceremind deals --pantry         # only deals on items currently in your pantry
-lettuceremind deals --zip 32081      # live Publix weekly ad near a ZIP
-lettuceremind deals --zip 32081 --refresh   # save that ad into deals.json
+lettuceremind deals --zip 32081      # live Publix weekly ad near a ZIP (saves deals.json)
+lettuceremind deals --zip 32081 --refresh   # same — --refresh is an alias for --zip
 ```
 
 ```
@@ -166,9 +166,10 @@ calendar month. Publix deals come from the same store-scoped weekly ad that
 [Publix-Discount-Detector](https://github.com/jhustln/Publix-Discount-Detector)
 scrapes — LettuceRemind talks to Publix's public services API directly
 (stdlib only). The built-in Publix catalog is a **ZIP 32081** snapshot
-(Nocatee Town Center); `--zip` / `--refresh` replace it with the live
-circular. For other chains, drop a JSON feed at `~/.lettuceremind/deals.json`
-(or point `$LETTUCEREMIND_DEALS` at one):
+(Nocatee Town Center); opening the web **Deals** tab (or `/deals`) auto-pulls
+the live circular when that snapshot is still in use. `--zip` / `--refresh`
+also write `~/.lettuceremind/deals.json`. For other chains, drop a JSON feed
+at that path (or point `$LETTUCEREMIND_DEALS` at one):
 
 ```json
 {"deals": [{"store": "kroger", "item": "milk", "price": "$1.99",
