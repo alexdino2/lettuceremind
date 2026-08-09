@@ -5,7 +5,9 @@ the printed URL on your iPhone, point the camera at your pantry, and
 every product the scanner recognizes is added to your inventory as you
 go. Frames are captured in the browser, sent here as JPEG, OCR'd
 (``lettuceremind[ocr]``), and resolved through the same normalize/match
-pipeline the receipt scanner uses.
+pipeline the receipt scanner uses. The same UI also exposes a Local Deals
+tab backed by ``/api/deals`` (built-in circulars plus any live Publix feed
+in ``~/.lettuceremind/deals.json``).
 
 Security model: the server is meant for your own Wi-Fi. Unless started
 with ``--no-key`` it generates a random access key, embeds it in the URL
@@ -32,7 +34,15 @@ from pathlib import Path
 from typing import Optional, Union
 
 from lettuceremind import __version__
+from lettuceremind.deals import (
+    STORES,
+    current_deals,
+    custom_feed_path,
+    match_pantry,
+    resolve_store,
+)
 from lettuceremind.models import PantryItem
+from lettuceremind.publix import DEFAULT_ZIP, refresh_feed
 from lettuceremind.receipt.matcher import FoodMatcher
 from lettuceremind.shelf_life import shelf_life_for
 from lettuceremind.store import PantryStore
@@ -186,6 +196,107 @@ class PantryScanApp:
             count = len(store.all())
         return {"removed": removed, "pantry_count": count}
 
+    @staticmethod
+    def _deal_dict(deal, pantry_item: Optional[PantryItem] = None) -> dict:
+        entry = {
+            "store": deal.store,
+            "store_name": deal.store_name,
+            "item": deal.item,
+            "description": deal.description,
+            "price": deal.price,
+            "regular_price": deal.regular_price,
+            "valid_from": deal.valid_from.isoformat(),
+            "valid_to": deal.valid_to.isoformat(),
+            "source": deal.source,
+            "in_pantry": pantry_item is not None,
+        }
+        if pantry_item is not None:
+            entry["days_left"] = pantry_item.days_left()
+        return entry
+
+    def _feed_meta(self) -> Optional[dict]:
+        path = custom_feed_path()
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"path": str(path)}
+        if not isinstance(data, dict):
+            return {"path": str(path)}
+        meta = {"path": str(path)}
+        for key in ("zip", "store_number", "store_name", "updated"):
+            if data.get(key):
+                meta[key] = data[key]
+        return meta
+
+    def _deals_payload(
+        self,
+        *,
+        today: Optional[date] = None,
+        stores: Optional[list[str]] = None,
+        pantry_only: bool = False,
+        note: str = "",
+    ) -> dict:
+        today = today or date.today()
+        deals = current_deals(today=today, stores=stores)
+        matches = match_pantry(deals, self._store().all(), matcher=self._matcher)
+        if pantry_only:
+            deals = [d for d in deals if d in matches]
+        note = note or ""
+        if not note and any(d.source == "builtin" and d.store == "publix" for d in deals):
+            note = (
+                "Showing the built-in Publix snapshot. Tap Refresh to pull the "
+                "live weekly ad for your ZIP."
+            )
+        elif not note and any(d.source == "builtin" for d in deals):
+            note = (
+                "Kroger / Whole Foods / Costco use built-in sample circulars "
+                "unless you add a live feed."
+            )
+        return {
+            "date": today.isoformat(),
+            "stores": [
+                {"key": key, "name": STORES[key]}
+                for key in (stores or list(STORES))
+            ],
+            "deals": [self._deal_dict(d, matches.get(d)) for d in deals],
+            "count": len(deals),
+            "feed": self._feed_meta(),
+            "default_zip": DEFAULT_ZIP,
+            "note": note,
+        }
+
+    def deals(
+        self,
+        *,
+        store: Optional[str] = None,
+        pantry_only: bool = False,
+    ) -> dict:
+        """Local deals for today, optionally filtered to one store / pantry."""
+        stores = None
+        if store:
+            try:
+                stores = [resolve_store(store)]
+            except ValueError as exc:
+                raise ApiError(400, str(exc)) from None
+        return self._deals_payload(stores=stores, pantry_only=pantry_only)
+
+    def refresh_deals(self, payload: dict) -> dict:
+        """Pull the live Publix weekly ad for a ZIP into deals.json."""
+        zip_code = str(payload.get("zip") or DEFAULT_ZIP).strip()
+        try:
+            store, live_deals, path = refresh_feed(zip_code)
+        except ValueError as exc:
+            raise ApiError(400, str(exc)) from None
+        except RuntimeError as exc:
+            raise ApiError(502, str(exc)) from None
+        note = (
+            f"Refreshed Publix near {zip_code} → {store.name} #{store.number} "
+            f"({len(live_deals)} deals saved to {path.name})."
+        )
+        return self._deals_payload(stores=["publix"], note=note)
+
 
 def _page_html() -> str:
     return (
@@ -236,12 +347,14 @@ class _Handler(BaseHTTPRequestHandler):
         body = json.dumps(payload).encode("utf-8")
         self._respond(status, body, "application/json; charset=utf-8")
 
-    def _read_json_body(self) -> dict:
+    def _read_json_body(self, *, allow_empty: bool = False) -> dict:
         try:
             length = int(self.headers.get("Content-Length", 0))
         except ValueError:
             raise ApiError(400, "bad Content-Length") from None
         if length <= 0:
+            if allow_empty:
+                return {}
             raise ApiError(400, "empty request body")
         if length > MAX_BODY_BYTES:
             raise ApiError(413, "request body too large")
@@ -273,6 +386,18 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(401, {"error": "missing or wrong access key"})
                 return
             self._json(200, self.app.pantry())
+        elif path == "/api/deals":
+            if not self._authorized(query):
+                self._json(401, {"error": "missing or wrong access key"})
+                return
+            pantry_only = query.get("pantry", "").lower() in ("1", "true", "yes")
+            try:
+                self._json(200, self.app.deals(
+                    store=query.get("store") or None,
+                    pantry_only=pantry_only,
+                ))
+            except ApiError as exc:
+                self._json(exc.status, {"error": str(exc)})
         else:
             self._json(404, {"error": "not found"})
 
@@ -282,6 +407,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/scan": self.app.scan,
             "/api/add": self.app.add,
             "/api/remove": self.app.remove,
+            "/api/deals/refresh": self.app.refresh_deals,
         }
         handler = routes.get(path)
         try:
@@ -289,7 +415,8 @@ class _Handler(BaseHTTPRequestHandler):
                 raise ApiError(404, "not found")
             if not self._authorized(query):
                 raise ApiError(401, "missing or wrong access key")
-            self._json(200, handler(self._read_json_body()))
+            body = self._read_json_body(allow_empty=(path == "/api/deals/refresh"))
+            self._json(200, handler(body))
         except ApiError as exc:
             self._json(exc.status, {"error": str(exc)})
 

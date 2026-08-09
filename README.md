@@ -126,8 +126,11 @@ Open that URL in Safari and scan away. How it works:
   (tap-to-snap), which works everywhere. With HTTPS
   (`--certfile`/`--keyfile`) you get a **live viewfinder with
   auto-scan** — pan slowly along the shelf and items roll in.
-- There's also a type-to-add box, a session feed with undo, and a
-  pantry view with per-item days-left badges and remove buttons.
+- There's also a type-to-add box, a session feed with undo, a pantry view
+  with per-item days-left badges and remove buttons, and a **Deals** tab
+  that lists this week's local grocery deals. Use **Refresh Publix** with
+  your ZIP to pull the live weekly ad into `~/.lettuceremind/deals.json`
+  (same feed the CLI uses).
 
 The server protects your pantry with a random access key baked into the
 printed URL (disable with `--no-key`), and uses the same pantry
@@ -138,7 +141,8 @@ per-user pantry. `--host` and `--port` (default 8043) work as expected.
 
 LettuceRemind tracks weekly grocery deals at **Publix**, **Kroger**,
 **Whole Foods**, and **Costco**, and cross-references them with your pantry —
-so you know when something you're about to run out of is on sale:
+so you know when something you're about to run out of is on sale. Browse them
+in the phone app's **Deals** tab, or from the CLI:
 
 ```bash
 lettuceremind deals                  # this week's deals at all four stores

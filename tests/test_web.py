@@ -203,6 +203,48 @@ def test_api_end_to_end_over_http(server):
     assert json.loads(body)["removed"] == 1
 
 
+def test_api_deals_returns_builtin_catalog(server, monkeypatch, tmp_path):
+    monkeypatch.setenv("LETTUCEREMIND_HOME", str(tmp_path))
+    monkeypatch.delenv("LETTUCEREMIND_DEALS", raising=False)
+    status, body, _ = _request(f"{server}/api/deals")
+    assert status == 200
+    data = json.loads(body)
+    assert data["count"] > 0
+    assert {d["store"] for d in data["deals"]} >= {"publix", "kroger"}
+    chicken = [d for d in data["deals"] if d["item"] == "chicken breast"]
+    # Builtin rotation may or may not include chicken this week — just check shape.
+    assert all("price" in d and "valid_to" in d and "source" in d for d in data["deals"])
+    assert data["default_zip"] == "32081"
+
+
+def test_api_deals_refresh_publix(server, monkeypatch, tmp_path):
+    from unittest.mock import patch
+
+    from tests.test_publix import _fake_get_json
+
+    monkeypatch.setenv("LETTUCEREMIND_HOME", str(tmp_path))
+    monkeypatch.delenv("LETTUCEREMIND_DEALS", raising=False)
+    with patch("lettuceremind.publix._get_json", side_effect=_fake_get_json):
+        status, body, _ = _request(
+            f"{server}/api/deals/refresh", {"zip": "32081"}
+        )
+    assert status == 200
+    data = json.loads(body)
+    assert data["feed"]["zip"] == "32081"
+    assert data["feed"]["store_number"] == "01243"
+    chicken = next(d for d in data["deals"] if d["item"] == "chicken breast")
+    assert chicken["source"] == "publix"
+    assert "Fillets" in chicken["description"]
+    assert "Save up to $8.50" in chicken["price"]
+    assert (tmp_path / "deals.json").exists()
+
+    # After refresh, GET serves the live feed (not just builtins).
+    status, body, _ = _request(f"{server}/api/deals?store=publix")
+    live = json.loads(body)
+    assert any(d["item"] == "chicken breast" and d["source"] == "publix"
+               for d in live["deals"])
+
+
 def test_api_rejects_wrong_key_and_bad_routes(server):
     with pytest.raises(urllib.error.HTTPError) as exc:
         _request(f"{server}/api/pantry", key="wrong")

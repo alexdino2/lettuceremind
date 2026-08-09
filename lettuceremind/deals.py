@@ -236,10 +236,13 @@ def custom_deals(today: date, stores: Optional[list[str]] = None) -> list[Deal]:
         if not valid_from <= today <= valid_to:
             continue
         reg = entry.get("regular_price")
+        source = str(entry.get("source") or "custom").strip().lower()
+        if source not in ("custom", "publix", "builtin"):
+            source = "custom"
         out.append(Deal(store=store, item=item,
                         description=str(entry.get("description", "")),
                         price=price, regular_price=str(reg) if reg else None,
-                        valid_from=valid_from, valid_to=valid_to, source="custom"))
+                        valid_from=valid_from, valid_to=valid_to, source=source))
     return out
 
 
