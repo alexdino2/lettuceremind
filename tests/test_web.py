@@ -249,9 +249,22 @@ def test_page_requires_key_and_serves_app(server):
     assert status == 200
     assert ctype.startswith("text/html")
     assert b"Pantry Scanner" in body
+    assert b"id=\"dealsBtn\"" in body
+    assert b"id=\"dealsPanel\"" in body
+
+    # Deep links into the SPA must serve the same app (not JSON 404).
+    for path in ("/deals", "/pantry"):
+        status, body, ctype = _request(f"{server}{path}?key=sesame", key=None)
+        assert status == 200, path
+        assert ctype.startswith("text/html"), path
+        assert b"id=\"dealsPanel\"" in body, path
 
     with pytest.raises(urllib.error.HTTPError) as exc:
         _request(f"{server}/", key=None)
+    assert exc.value.code == 401
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _request(f"{server}/deals", key=None)
     assert exc.value.code == 401
 
 
@@ -288,10 +301,10 @@ def test_api_deals_returns_builtin_catalog(server, monkeypatch, tmp_path):
     data = json.loads(body)
     assert data["count"] > 0
     assert {d["store"] for d in data["deals"]} >= {"publix", "kroger"}
-    chicken = [d for d in data["deals"] if d["item"] == "chicken breast"]
-    # Builtin rotation may or may not include chicken this week — just check shape.
-    assert all("price" in d and "valid_to" in d and "source" in d for d in data["deals"])
     assert data["default_zip"] == "32081"
+    assert data["publix_is_sample"] is True
+    assert data["publix_live"] is False
+    assert all("price" in d and "valid_to" in d and "source" in d for d in data["deals"])
 
 
 def test_api_deals_refresh_publix(server, monkeypatch, tmp_path):
@@ -309,6 +322,8 @@ def test_api_deals_refresh_publix(server, monkeypatch, tmp_path):
     data = json.loads(body)
     assert data["feed"]["zip"] == "32081"
     assert data["feed"]["store_number"] == "01243"
+    assert data["publix_live"] is True
+    assert data["publix_is_sample"] is False
     chicken = next(d for d in data["deals"] if d["item"] == "chicken breast")
     assert chicken["source"] == "publix"
     assert "Fillets" in chicken["description"]
@@ -318,8 +333,15 @@ def test_api_deals_refresh_publix(server, monkeypatch, tmp_path):
     # After refresh, GET serves the live feed (not just builtins).
     status, body, _ = _request(f"{server}/api/deals?store=publix")
     live = json.loads(body)
+    assert live["publix_live"] is True
     assert any(d["item"] == "chicken breast" and d["source"] == "publix"
                for d in live["deals"])
+
+    # ?live=1 refreshes again via GET.
+    with patch("lettuceremind.publix._get_json", side_effect=_fake_get_json):
+        status, body, _ = _request(f"{server}/api/deals?live=1&zip=32081")
+    assert status == 200
+    assert json.loads(body)["publix_live"] is True
 
 
 def test_api_rejects_wrong_key_and_bad_routes(server):

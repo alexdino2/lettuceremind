@@ -350,6 +350,29 @@
     $("pantryBtn").textContent = "Pantry (" + (pantryCount === null ? "…" : pantryCount) + ")";
   }
 
+  function pathForView(view) {
+    if (view === "deals") return "/deals";
+    if (view === "pantry") return "/pantry";
+    return "/";
+  }
+
+  function syncUrl(view) {
+    var next = pathForView(view);
+    var params = new URLSearchParams(location.search);
+    if (KEY) params.set("key", KEY);
+    else params.delete("key");
+    var qs = params.toString();
+    var url = next + (qs ? ("?" + qs) : "");
+    if (location.pathname + location.search !== url) {
+      history.replaceState({ view: view }, "", url);
+    }
+    document.title = view === "deals"
+      ? "🥬 LettuceRemind — Local Deals"
+      : view === "pantry"
+        ? "🥬 LettuceRemind — Pantry"
+        : "🥬 LettuceRemind — Pantry Scanner";
+  }
+
   function setView(view) {
     document.body.classList.remove("show-pantry", "show-deals");
     $("pantryBtn").classList.remove("on");
@@ -364,6 +387,17 @@
       document.body.classList.add("show-deals");
       $("dealsBtn").classList.add("on");
     }
+    syncUrl(view);
+  }
+
+  function initialView() {
+    var params = new URLSearchParams(location.search);
+    var q = (params.get("view") || "").toLowerCase();
+    var hash = (location.hash || "").replace(/^#/, "").toLowerCase();
+    var path = (location.pathname || "/").replace(/\/+$/, "") || "/";
+    if (path === "/deals" || q === "deals" || hash === "deals") return "deals";
+    if (path === "/pantry" || q === "pantry" || hash === "pantry") return "pantry";
+    return "scanner";
   }
 
   // ---- camera ----------------------------------------------------------
@@ -760,9 +794,56 @@
     });
   }
 
-  function loadDeals() {
+  function loadDeals(opts) {
+    opts = opts || {};
     var q = pantryDealsOnly ? "?pantry=1" : "";
-    return api("/api/deals" + q).then(renderDeals);
+    return api("/api/deals" + q).then(function (data) {
+      renderDeals(data);
+      try {
+        if (data.feed && data.feed.zip) {
+          localStorage.setItem("lettuceremind_zip", data.feed.zip);
+        }
+      } catch (e) { /* ignore */ }
+
+      var zip = ($("zipInput").value || "").trim();
+      if (!zip) {
+        try { zip = localStorage.getItem("lettuceremind_zip") || ""; } catch (e) { zip = ""; }
+        zip = zip || data.default_zip || "";
+        if (zip) $("zipInput").value = zip;
+      }
+
+      // Sample/builtin Publix catalog is not the live weekly ad — pull it.
+      if (opts.skipAutoRefresh || pantryDealsOnly || !data.publix_is_sample) {
+        return data;
+      }
+      if (zip && !/^\d{5}$/.test(zip)) {
+        return data;
+      }
+      var note = $("dealsNote");
+      note.hidden = false;
+      note.textContent = "Pulling live Publix weekly ad for " + (zip || data.default_zip) + "…";
+      $("refreshDealsBtn").disabled = true;
+      $("refreshDealsBtn").textContent = "Refreshing…";
+      return api("/api/deals/refresh", { zip: zip || undefined }).then(function (live) {
+        try {
+          if (live.feed && live.feed.zip) {
+            localStorage.setItem("lettuceremind_zip", live.feed.zip);
+          }
+        } catch (e) { /* ignore */ }
+        pantryDealsOnly = false;
+        $("pantryDealsChip").classList.remove("on");
+        renderDeals(live);
+        return live;
+      }).catch(function (err) {
+        note.hidden = false;
+        note.textContent = "Could not refresh live Publix deals: " + err.message +
+          " Showing the built-in sample catalog — tap Refresh Publix to retry.";
+        throw err;
+      }).finally(function () {
+        $("refreshDealsBtn").disabled = false;
+        $("refreshDealsBtn").textContent = "Refresh Publix";
+      });
+    });
   }
 
   $("dealsBtn").addEventListener("click", function () {
@@ -775,16 +856,18 @@
     setView("deals");
     $("dealsList").innerHTML = '<div id="dealsEmpty">Loading deals…</div>';
     loadDeals().catch(function (err) {
-      $("dealsList").innerHTML = "";
-      setStatus("Couldn't load deals: " + err.message, "bad");
+      if (!$("dealsList").children.length) {
+        $("dealsList").innerHTML = "";
+      }
+      banner("Couldn't load live deals: " + err.message);
     });
   });
 
   $("pantryDealsChip").addEventListener("click", function () {
     pantryDealsOnly = !pantryDealsOnly;
     this.classList.toggle("on", pantryDealsOnly);
-    loadDeals().catch(function (err) {
-      setStatus("Couldn't load deals: " + err.message, "bad");
+    loadDeals({ skipAutoRefresh: true }).catch(function (err) {
+      banner("Couldn't load deals: " + err.message);
     });
   });
 
@@ -792,18 +875,25 @@
     var btn = this;
     var zip = ($("zipInput").value || "").trim();
     if (zip && !/^\d{5}$/.test(zip)) {
-      setStatus("ZIP must be 5 digits.", "bad");
+      banner("ZIP must be 5 digits.");
       return;
     }
     btn.disabled = true;
     btn.textContent = "Refreshing…";
     api("/api/deals/refresh", { zip: zip || undefined }).then(function (data) {
+      try {
+        if (data.feed && data.feed.zip) {
+          localStorage.setItem("lettuceremind_zip", data.feed.zip);
+        } else if (zip) {
+          localStorage.setItem("lettuceremind_zip", zip);
+        }
+      } catch (e) { /* ignore */ }
       pantryDealsOnly = false;
       $("pantryDealsChip").classList.remove("on");
       renderDeals(data);
-      setStatus(data.note || "Publix deals refreshed.", "good");
+      banner(data.note || "Publix deals refreshed.");
     }).catch(function (err) {
-      setStatus("Refresh failed: " + err.message, "bad");
+      banner("Refresh failed: " + err.message);
     }).finally(function () {
       btn.disabled = false;
       btn.textContent = "Refresh Publix";
@@ -811,9 +901,31 @@
   });
 
   // ---- boot ------------------------------------------------------------
+  try {
+    var savedZip = localStorage.getItem("lettuceremind_zip");
+    if (savedZip && /^\d{5}$/.test(savedZip)) $("zipInput").value = savedZip;
+  } catch (e) { /* ignore */ }
+
   api("/api/pantry").then(function (data) { setCount(data.count); }).catch(function (err) {
     if (err.status === 401) banner("Access key missing or wrong — open the exact URL printed by `lettuceremind serve`.");
   });
+
+  var bootView = initialView();
+  if (bootView === "deals") {
+    setView("deals");
+    $("dealsList").innerHTML = '<div id="dealsEmpty">Loading deals…</div>';
+    loadDeals().catch(function (err) {
+      banner("Couldn't load live deals: " + err.message);
+    });
+  } else if (bootView === "pantry") {
+    setView("pantry");
+    api("/api/pantry").then(renderPantry).catch(function (err) {
+      $("pantryList").innerHTML = "";
+      $("expiringList").innerHTML = "";
+      banner("Couldn't load pantry: " + err.message);
+    });
+  }
+  // Always init camera so returning from /deals or /pantry still works.
   startCamera();
 })();
 </script>

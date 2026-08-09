@@ -308,14 +308,15 @@ class PantryScanApp:
         note = note or ""
         if not note and any(d.source == "builtin" and d.store == "publix" for d in deals):
             note = (
-                "Showing the built-in Publix snapshot. Tap Refresh to pull the "
-                "live weekly ad for your ZIP."
+                "Showing the built-in Publix snapshot — pulling the live "
+                "weekly ad for your ZIP…"
             )
         elif not note and any(d.source == "builtin" for d in deals):
             note = (
                 "Kroger / Whole Foods / Costco use built-in sample circulars "
                 "unless you add a live feed."
             )
+        publix_sources = {d.source for d in deals if d.store == "publix"}
         return {
             "date": today.isoformat(),
             "stores": [
@@ -327,6 +328,8 @@ class PantryScanApp:
             "feed": self._feed_meta(),
             "default_zip": DEFAULT_ZIP,
             "note": note,
+            "publix_live": "publix" in publix_sources,
+            "publix_is_sample": "builtin" in publix_sources,
         }
 
     def deals(
@@ -432,7 +435,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path, query = self._split_path()
-        if path in ("/", "/index.html"):
+        # SPA entry points — /deals and /pantry deep-link into the same app.
+        if path in ("/", "/index.html", "/deals", "/pantry"):
             if not self._authorized(query):
                 self._respond(
                     401,
@@ -453,11 +457,16 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(401, {"error": "missing or wrong access key"})
                 return
             pantry_only = query.get("pantry", "").lower() in ("1", "true", "yes")
+            live = query.get("live", "").lower() in ("1", "true", "yes")
             try:
-                self._json(200, self.app.deals(
-                    store=query.get("store") or None,
-                    pantry_only=pantry_only,
-                ))
+                if live:
+                    zip_code = query.get("zip") or DEFAULT_ZIP
+                    self._json(200, self.app.refresh_deals({"zip": zip_code}))
+                else:
+                    self._json(200, self.app.deals(
+                        store=query.get("store") or None,
+                        pantry_only=pantry_only,
+                    ))
             except ApiError as exc:
                 self._json(exc.status, {"error": str(exc)})
         else:
