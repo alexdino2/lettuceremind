@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -33,6 +33,13 @@ STORE_PAYLOAD = {
     }],
 }
 
+# A current Wed–Tue circular window relative to "today" so the mocked live
+# feed is always valid on the day the test runs (the CLI and web layers drop
+# deals whose validity window has passed). Kept as ISO strings the way the
+# Publix API returns them.
+_WA_START = (date.today() - timedelta(days=1)).isoformat() + "T00:00:00Z"
+_WA_END = (date.today() + timedelta(days=5)).isoformat() + "T23:59:59Z"
+
 SAVINGS_PAYLOAD = {
     "Savings": [
         {
@@ -41,8 +48,8 @@ SAVINGS_PAYLOAD = {
             "savings": "Buy 1 Get 1 FREE",
             "description": "Or Red Raspberries, 6 or 16-oz pkg.",
             "department": "Produce",
-            "wa_startDate": "2026-08-06T00:00:00Z",
-            "wa_endDate": "2026-08-12T23:59:59Z",
+            "wa_startDate": _WA_START,
+            "wa_endDate": _WA_END,
         },
         {
             "savingType": "WeeklyAd",
@@ -52,8 +59,8 @@ SAVINGS_PAYLOAD = {
             "description": "Boneless, Skinless, 18 or 20-oz pkg.",
             "department": "Meat",
             "recommendedRank": 1,
-            "wa_startDate": "2026-08-06T00:00:00Z",
-            "wa_endDate": "2026-08-12T23:59:59Z",
+            "wa_startDate": _WA_START,
+            "wa_endDate": _WA_END,
         },
         {
             "savingType": "WeeklyAd",
@@ -62,8 +69,8 @@ SAVINGS_PAYLOAD = {
             "description": "Bites, Strips, or Fillets; Sold Frozen, 19.2 or 24-oz pkg.",
             "department": "Frozen Meat",
             "recommendedRank": 40,
-            "wa_startDate": "2026-08-06T00:00:00Z",
-            "wa_endDate": "2026-08-12T23:59:59Z",
+            "wa_startDate": _WA_START,
+            "wa_endDate": _WA_END,
         },
         {
             "savingType": "DigitalCoupon",
@@ -80,8 +87,8 @@ SAVINGS_PAYLOAD = {
             "savings": "$7.99 lb",
             "description": "Publix Beef, USDA-Inspected, 3-lbs or More Package.",
             "department": "Meat",
-            "wa_startDate": "2026-08-06T00:00:00Z",
-            "wa_endDate": "2026-08-12T23:59:59Z",
+            "wa_startDate": _WA_START,
+            "wa_endDate": _WA_END,
         },
     ],
 }
@@ -191,6 +198,53 @@ def test_map_prefers_featured_fillets_over_breaded_variant():
     assert "Save up to $8.50" in chicken.price
 
 
+def test_map_prefers_food_named_department_over_bakery_echo():
+    # A bakery good that merely echoes the food word ("Coffee Cakes",
+    # "Braided Egg Challah Bread") must not outrank the real item that lives
+    # in the department named after the food — Bakery would otherwise win on
+    # the fresh-department bonus.
+    raw = [
+        RawPublixDeal(
+            title="Coffee Cakes",
+            savings="$5.99 · Save up to $1.00",
+            description="From the Publix Bakery, 15-oz pkg.",
+            department="Bakery",
+            valid_from=date(2026, 8, 6),
+            valid_to=date(2026, 8, 12),
+        ),
+        RawPublixDeal(
+            title="Chock Full o'Nuts Ground Coffee",
+            savings="$12.99 · Save up to $4.28",
+            description="23 to 26-oz can.",
+            department="Coffee & Tea",
+            valid_from=date(2026, 8, 6),
+            valid_to=date(2026, 8, 12),
+        ),
+        RawPublixDeal(
+            title="Braided Egg Challah Bread",
+            savings="$4.99 · Save up to $0.50",
+            description="From the Publix Bakery.",
+            department="Bakery",
+            valid_from=date(2026, 8, 6),
+            valid_to=date(2026, 8, 12),
+        ),
+        RawPublixDeal(
+            title="Nellie's Free Range Eggs",
+            savings="BOGO · Save up to $6.19",
+            description="Large, 12-ct.",
+            department="Eggs",
+            valid_from=date(2026, 8, 6),
+            valid_to=date(2026, 8, 12),
+        ),
+    ]
+    deals = map_to_deals(raw)
+    by_item = {d.item: d for d in deals}
+    assert "Ground Coffee" in by_item["coffee"].description
+    assert "Cakes" not in by_item["coffee"].description
+    assert "Nellie's Free Range Eggs" in by_item["eggs"].description
+    assert "Challah" not in by_item["eggs"].description
+
+
 def test_deals_for_zip_end_to_end():
     with patch("lettuceremind.publix._get_json", side_effect=_fake_get_json):
         store, deals = deals_for_zip("32081")
@@ -203,9 +257,11 @@ def test_deals_for_zip_end_to_end():
 
 def test_refresh_feed_writes_publix_and_preserves_other_stores(isolated_home, monkeypatch):
     feed = isolated_home / "deals.json"
+    today = date.today()
     feed.write_text(json.dumps({"deals": [
         {"store": "kroger", "item": "milk", "price": "$1.49",
-         "valid_from": "2026-08-01", "valid_to": "2026-08-31"},
+         "valid_from": (today - timedelta(days=3)).isoformat(),
+         "valid_to": (today + timedelta(days=3)).isoformat()},
         {"store": "publix", "item": "bananas", "price": "$0.10",
          "valid_from": "2026-01-01", "valid_to": "2026-01-07"},
     ]}))
@@ -221,7 +277,7 @@ def test_refresh_feed_writes_publix_and_preserves_other_stores(isolated_home, mo
     assert "bananas" not in [d["item"] for d in data["deals"] if d["store"] == "publix"]
 
     # Live Publix feed replaces the built-in Publix snapshot.
-    shown = current_deals(today=date(2026, 8, 9), stores=["publix", "kroger"])
+    shown = current_deals(today=today, stores=["publix", "kroger"])
     assert {d.store for d in shown} == {"publix", "kroger"}
     assert all(d.source == "publix" for d in shown if d.store == "publix")
     assert any(d.item == "milk" and d.source == "custom" for d in shown)
@@ -243,7 +299,7 @@ def test_cli_zip_lists_live_publix(isolated_home, monkeypatch, capsys):
     assert feed.exists()
     data = json.loads(feed.read_text(encoding="utf-8"))
     assert any(d["item"] == "chicken breast" for d in data["deals"])
-    shown = current_deals(today=date(2026, 8, 9), stores=["publix"])
+    shown = current_deals(today=date.today(), stores=["publix"])
     assert all(d.source == "publix" for d in shown)
     assert any("Fillets" in d.description for d in shown if d.item == "chicken breast")
 

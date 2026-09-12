@@ -316,8 +316,16 @@ def map_to_deals(
         contiguous = 0 if name_l in title_l else 1
         extra_words = max(0, len(title_l.split()) - len(name_l.split()))
         rank = raw.recommended_rank if raw.recommended_rank is not None else 999
+        # A product sitting in the department named after the food itself
+        # (eggs in "Eggs", coffee in "Coffee & Tea") is far more likely to be
+        # the real item than a bakery good that merely echoes the word —
+        # "Coffee Cakes" or "Braided Egg Challah Bread" would otherwise win on
+        # the fresh-department bonus that "Bakery" earns.
+        dept_words = set(re.findall(r"[a-z]+", (raw.department or "").lower()))
+        dept_match = 0 if dept_words & set(name_l.split()) else 1
         sort_key = (
             preferred.get(name, 1000),
+            dept_match,
             _department_penalty(raw.department),
             rank,
             contiguous,
