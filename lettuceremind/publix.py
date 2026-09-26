@@ -109,6 +109,26 @@ def _get_json(url: str, headers: Optional[dict[str, str]] = None) -> Any:
         raise RuntimeError(f"Publix API unreachable: {exc.reason}") from exc
 
 
+# Publix sometimes double-encodes entities ("&amp;Ntilde;") and then
+# title-cases the result, which splits a word at the entity:
+# "A&Ntilde;Ejo" instead of "Añejo".
+_MID_WORD_ENTITY = re.compile(r"(?<=[A-Za-z])&([A-Z])([a-z]+);([A-Z])(?=[a-z])")
+
+
+def _clean_text(value: Any) -> str:
+    text = str(value or "")
+    for _ in range(3):
+        text = _MID_WORD_ENTITY.sub(
+            lambda m: f"&{m.group(1).lower()}{m.group(2)};{m.group(3).lower()}",
+            text,
+        )
+        decoded = html.unescape(text)
+        if decoded == text:
+            break
+        text = decoded
+    return text.strip()
+
+
 def _parse_day(value: Optional[str], fallback: date) -> date:
     if not value:
         return fallback
@@ -180,19 +200,19 @@ def fetch_weekly_ad(store_number: str) -> list[RawPublixDeal]:
     for row in data.get("Savings") or []:
         if row.get("savingType") not in ("WeeklyAd", "Stacked"):
             continue
-        title = html.unescape(str(row.get("title") or "")).strip()
+        title = _clean_text(row.get("title"))
         if not title:
             continue
-        savings = html.unescape(str(row.get("savings") or "")).strip()
+        savings = _clean_text(row.get("savings"))
         savings = _normalize_price(savings)
-        extra = html.unescape(str(row.get("additionalDealInfo") or "")).strip()
+        extra = _clean_text(row.get("additionalDealInfo"))
         if extra:
             pretty = extra[:1].upper() + extra[1:].lower()
             if pretty.lower() not in savings.lower():
                 savings = f"{savings} · {pretty}"
-        desc = html.unescape(str(row.get("description") or "")).strip()
+        desc = _clean_text(row.get("description"))
         desc = re.sub(r"\s+", " ", desc.replace("\r\n", " ").replace("&#13;&#10;", " "))
-        dept = html.unescape(str(row.get("department") or "")).replace("&amp;", "&")
+        dept = _clean_text(row.get("department"))
         rank_raw = row.get("recommendedRank")
         try:
             rank = int(rank_raw) if rank_raw is not None else None
