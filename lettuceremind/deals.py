@@ -1,6 +1,6 @@
-"""Local grocery deals for Publix, Kroger, Whole Foods, and Costco.
+"""Local grocery deals for Publix, Kroger, Whole Foods, Aldi, and Costco.
 
-The app is offline and dependency-free. Kroger / Whole Foods / Costco ship
+The app is offline and dependency-free. Kroger / Whole Foods / Aldi / Costco ship
 a built-in catalog of representative circular deals that rotates
 deterministically: a Wednesday-to-Tuesday window for the grocery chains
 (circulars flip on Wednesday) and a calendar-month window for Costco's
@@ -46,6 +46,7 @@ STORES: dict[str, str] = {
     "publix": "Publix",
     "kroger": "Kroger",
     "whole-foods": "Whole Foods",
+    "aldi": "Aldi",
     "costco": "Costco",
 }
 
@@ -56,6 +57,8 @@ _STORE_ALIASES: dict[str, str] = {
     "wholefoods": "whole-foods",
     "whole foods market": "whole-foods",
     "wfm": "whole-foods",
+    "aldi": "aldi",
+    "aldi us": "aldi",
     "costco": "costco",
     "costco wholesale": "costco",
 }
@@ -137,6 +140,20 @@ BUILTIN_CATALOG: dict[str, tuple[tuple[str, str, str, Optional[str]], ...]] = {
         ("rotisserie chicken", "whole, classic", "$7.99", "$9.99"),
         ("feta cheese", "6 oz block", "$3.49", "$4.99"),
         ("honey", "raw, 12 oz", "$5.99", "$7.99"),
+    ),
+    "aldi": (
+        ("milk", "gallon, Friendly Farms", "$2.29", "$2.89"),
+        ("eggs", "dozen large, Goldhen", "$1.79", "$2.49"),
+        ("avocado", "hass, each", "$0.59", "$0.89"),
+        ("strawberries", "16 oz", "$1.99", "$2.99"),
+        ("chicken breast", "boneless skinless, Kirkwood", "$2.19/lb", "$2.99/lb"),
+        ("ground beef", "80/20, 1 lb", "$3.79", "$4.69"),
+        ("bread", "Specially Selected brioche loaf", "$2.99", "$3.69"),
+        ("shredded cheese", "8 oz, Happy Farms", "$1.89", "$2.39"),
+        ("greek yogurt", "32 oz, Friendly Farms", "$3.29", "$4.19"),
+        ("potatoes", "russet, 5 lb bag", "$2.49", "$3.49"),
+        ("tortillas", "flour, 10 ct, Casa Mamita", "$1.49", "$1.99"),
+        ("orange juice", "52 oz, Nature's Nectar", "$2.99", "$3.79"),
     ),
     "costco": (
         ("rotisserie chicken", "whole, hot", "$4.99", None),
@@ -340,7 +357,7 @@ def custom_deals(today: date, stores: Optional[list[str]] = None) -> list[Deal]:
 def current_deals(today: Optional[date] = None,
                   stores: Optional[list[str]] = None) -> list[Deal]:
     """All deals valid on ``today``: the built-in rotation plus any custom
-    feed entries, for the requested stores (default: all four). Alcohol,
+    feed entries, for the requested stores (default: all five). Alcohol,
     pharmacy, and other non-food deals are filtered out.
 
     When the custom feed already has entries for a store, that store's

@@ -427,10 +427,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_deals = sub.add_parser(
         "deals",
-        help="this week's grocery deals (Publix, Kroger, Whole Foods, Costco)")
+        help="this week's grocery deals (Publix, Kroger, Whole Foods, Aldi, Costco)")
     p_deals.add_argument("store_name", nargs="?", metavar="STORE",
                          help="only one store, e.g. publix, kroger, "
-                              '"whole foods", costco')
+                              '"whole foods", aldi, costco')
     p_deals.add_argument("--pantry", action="store_true",
                          help="only deals on items currently in your pantry")
     p_deals.add_argument("--date", type=_parse_date, default=None,

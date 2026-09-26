@@ -30,8 +30,8 @@ def isolated_home(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_all_four_stores_are_supported():
-    assert set(STORES) == {"publix", "kroger", "whole-foods", "costco"}
+def test_all_five_stores_are_supported():
+    assert set(STORES) == {"publix", "kroger", "whole-foods", "aldi", "costco"}
     assert set(BUILTIN_CATALOG) == set(STORES)
 
 
@@ -73,6 +73,7 @@ def test_costco_deals_run_for_the_calendar_month():
     ("wholefoods", "whole-foods"),
     ("WHOLE_FOODS", "whole-foods"),
     ("Costco Wholesale", "costco"),
+    ("ALDI", "aldi"),
 ])
 def test_resolve_store_aliases(name, key):
     assert resolve_store(name) == key
@@ -110,11 +111,11 @@ def test_match_pantry_flags_deals_on_owned_items():
     assert matches[strawberry_deals[0]].name == "strawberries"
 
 
-def test_cli_deals_lists_all_four_stores(capsys):
+def test_cli_deals_lists_all_five_stores(capsys):
     rc = main(["deals", "--date", "2026-07-08"])
     assert rc == 0
     out = capsys.readouterr().out
-    for name in ("Publix", "Kroger", "Whole Foods", "Costco"):
+    for name in ("Publix", "Kroger", "Whole Foods", "Aldi", "Costco"):
         assert name in out
 
 

@@ -315,7 +315,7 @@ class PantryScanApp:
             )
         elif not note and any(d.source == "builtin" for d in deals):
             note = (
-                "Kroger / Whole Foods / Costco use built-in sample circulars "
+                "Kroger / Whole Foods / Aldi / Costco use built-in sample circulars "
                 "unless you add a live feed."
             )
         publix_sources = {d.source for d in deals if d.store == "publix"}

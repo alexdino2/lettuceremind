@@ -300,7 +300,8 @@ def test_api_deals_returns_builtin_catalog(server, monkeypatch, tmp_path):
     assert status == 200
     data = json.loads(body)
     assert data["count"] > 0
-    assert {d["store"] for d in data["deals"]} >= {"publix", "kroger"}
+    assert {d["store"] for d in data["deals"]} >= {"publix", "kroger", "aldi"}
+    assert {"key": "aldi", "name": "Aldi"} in data["stores"]
     assert data["default_zip"] == "32081"
     assert data["publix_is_sample"] is True
     assert data["publix_live"] is False
