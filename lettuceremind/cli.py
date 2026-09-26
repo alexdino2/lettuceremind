@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
 import secrets
 import sys
 from datetime import date, timedelta
 from typing import Optional
 
-from lettuceremind import __version__, auth
+from lettuceremind import __version__, auth, instacart
 from lettuceremind.deals import STORES, current_deals, match_pantry, resolve_store
 from lettuceremind.models import PantryItem
 from lettuceremind.publix import DEFAULT_ZIP, refresh_feed
@@ -287,6 +288,97 @@ def cmd_whoami(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_instacart_connect(args: argparse.Namespace) -> int:
+    username = instacart.require_user()  # fail before prompting for a key
+    api_key = args.api_key or os.environ.get("INSTACART_API_KEY") or ""
+    if not api_key:
+        api_key = getpass.getpass("Instacart API key: ")
+    conn = instacart.connect(
+        api_key,
+        username=username,
+        environment=instacart.DEVELOPMENT if args.dev else instacart.PRODUCTION,
+        postal_code=args.zip,
+        retailer=args.retailer,
+        verify=not args.no_verify,
+    )
+    dev = " (development)" if conn.environment == instacart.DEVELOPMENT else ""
+    print(f"🛒 Connected {username} to Instacart{dev} — key {conn.masked_key}.")
+    if conn.retailer_name:
+        print(f"   Preferred store: {conn.retailer_name}")
+    if conn.postal_code:
+        print(f"   ZIP: {conn.postal_code}")
+    print("   Run `lettuceremind instacart shop` to restock what's expiring.")
+    return 0
+
+
+def cmd_instacart_disconnect(args: argparse.Namespace) -> int:
+    username = instacart.require_user()
+    if instacart.disconnect(username):
+        print(f"Disconnected {username} from Instacart; the API key was deleted.")
+    else:
+        print(f"{username} isn't connected to Instacart.")
+    return 0
+
+
+def cmd_instacart_status(args: argparse.Namespace) -> int:
+    username = auth.current_user()
+    if username is None:
+        print("Not logged in — log in to connect your account to Instacart.")
+        return 0
+    conn = instacart.get_connection(username)
+    if conn is None:
+        print(f"{username} isn't connected to Instacart. "
+              f"Run `lettuceremind instacart connect`.")
+        return 0
+    print(f"🛒 {username} is connected to Instacart")
+    print(f"   key: {conn.masked_key}  ({conn.environment})")
+    print(f"   store: {conn.retailer_name or 'choose at checkout'}")
+    if conn.postal_code:
+        print(f"   ZIP: {conn.postal_code}")
+    if conn.connected_on:
+        print(f"   since: {conn.connected_on}")
+    return 0
+
+
+def cmd_instacart_stores(args: argparse.Namespace) -> int:
+    conn = instacart.require_connection()
+    zip_code = args.zip or conn.postal_code or DEFAULT_ZIP
+    client = instacart.InstacartClient(conn.api_key, conn.environment)
+    retailers = client.list_retailers(zip_code)
+    if not retailers:
+        print(f"No Instacart stores deliver to ZIP {zip_code}.")
+        return 0
+    print(f"🛒 Instacart stores near {zip_code}:\n")
+    width = max(len(r.name) for r in retailers)
+    for r in retailers:
+        mark = "  ← preferred" if r.key == conn.retailer_key else ""
+        print(f"  {r.name:<{width}}  {r.key}{mark}")
+    print("\nSet a preferred store with "
+          "`lettuceremind instacart connect --zip ZIP --retailer NAME`.")
+    return 0
+
+
+def cmd_instacart_shop(args: argparse.Namespace) -> int:
+    conn = instacart.require_connection()
+    if args.items:
+        items = instacart.line_items((name, 1) for name in args.items)
+    else:
+        items = instacart.restock_items(PantryStore(args.store).all(),
+                                        within_days=args.days)
+        if not items:
+            print(f"Nothing expires in the next {args.days} day(s) — "
+                  f"name items to shop for, e.g. "
+                  f"`lettuceremind instacart shop milk eggs`.")
+            return 0
+    url = instacart.create_shopping_list(conn, items, title=args.title)
+    print(f"🛒 Instacart shopping list ({len(items)} item(s)):\n")
+    for item in items:
+        qty = f" x{item['quantity']}" if item["quantity"] > 1 else ""
+        print(f"  {item['name']}{qty}")
+    print(f"\nOpen it to pick a store and check out:\n  {url}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lettuceremind",
@@ -390,6 +482,50 @@ def build_parser() -> argparse.ArgumentParser:
     p_who = sub.add_parser("whoami", help="show the active account and pantry")
     p_who.set_defaults(func=cmd_whoami)
 
+    p_ic = sub.add_parser(
+        "instacart",
+        help="connect your account to Instacart and restock from your pantry")
+    ic_sub = p_ic.add_subparsers(dest="instacart_command", required=True)
+
+    p_ic_conn = ic_sub.add_parser(
+        "connect", help="link an Instacart Developer Platform API key to your account")
+    p_ic_conn.add_argument("--api-key", default=None,
+                           help="API key (default: $INSTACART_API_KEY, else "
+                                "prompted securely)")
+    p_ic_conn.add_argument("--zip", default=None, help="your delivery ZIP code")
+    p_ic_conn.add_argument("--retailer", metavar="STORE", default=None,
+                           help="preferred store name or retailer key "
+                                "(needs --zip)")
+    p_ic_conn.add_argument("--dev", action="store_true",
+                           help="the key is an Instacart development key")
+    p_ic_conn.add_argument("--no-verify", action="store_true",
+                           help="save the key without checking it with Instacart")
+    p_ic_conn.set_defaults(func=cmd_instacart_connect)
+
+    p_ic_disc = ic_sub.add_parser("disconnect",
+                                  help="unlink Instacart and delete the stored key")
+    p_ic_disc.set_defaults(func=cmd_instacart_disconnect)
+
+    p_ic_stat = ic_sub.add_parser("status", help="show your Instacart connection")
+    p_ic_stat.set_defaults(func=cmd_instacart_status)
+
+    p_ic_stores = ic_sub.add_parser("stores",
+                                    help="Instacart stores that deliver to a ZIP")
+    p_ic_stores.add_argument("--zip", default=None,
+                             help="ZIP code (default: your connected ZIP)")
+    p_ic_stores.set_defaults(func=cmd_instacart_stores)
+
+    p_ic_shop = ic_sub.add_parser(
+        "shop", help="create an Instacart shopping list — by default, "
+                     "everything expiring soon")
+    p_ic_shop.add_argument("items", nargs="*", metavar="ITEM",
+                           help="items to shop for instead of expiring ones")
+    p_ic_shop.add_argument("--days", type=int, default=3,
+                           help="restock items expiring within DAYS (default: 3)")
+    p_ic_shop.add_argument("--title", default="LettuceRemind restock",
+                           help="shopping-list title")
+    p_ic_shop.set_defaults(func=cmd_instacart_shop)
+
     return parser
 
 
@@ -397,7 +533,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except auth.AuthError as exc:
+    except (auth.AuthError, instacart.InstacartError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except BrokenPipeError:

@@ -202,6 +202,38 @@ logging out revokes the session token, so a stale session file can't
 authenticate. `--password` is accepted for scripting; omit it to be
 prompted securely.
 
+## 🛒 Instacart
+
+Connect your LettuceRemind account to Instacart and turn whatever is about
+to expire into an Instacart shopping list — open the link, pick a store,
+and check out. It uses the
+[Instacart Developer Platform](https://docs.instacart.com/developer_platform_api/)
+API, so you'll need an IDP API key from Instacart's developer dashboard.
+
+```bash
+lettuceremind login alice                       # connections are per account
+lettuceremind instacart connect                 # prompts for the API key
+lettuceremind instacart connect --zip 32081 --retailer publix   # + preferred store
+lettuceremind instacart stores                  # stores that deliver to your ZIP
+lettuceremind instacart shop                    # list everything expiring in 3 days
+lettuceremind instacart shop --days 7
+lettuceremind instacart shop milk eggs bread    # or name what you want
+lettuceremind instacart status
+lettuceremind instacart disconnect              # deletes the stored key
+```
+
+`connect` checks the key with Instacart before saving it (`--no-verify`
+skips that; `--dev` is for development keys, and `$INSTACART_API_KEY` is
+read if `--api-key` is omitted). The key is stored only for that account, in
+`~/.lettuceremind/users/<name>/instacart.json` (mode 0600), and is never
+printed or sent to the web app — only its last four characters are shown.
+With a preferred store, shopping-list links open straight to that store.
+
+Instacart doesn't give third-party apps access to your Instacart login or
+cart: the shopping-list page is where you sign in to Instacart and check
+out. In the phone app, a connected account gets a **Restock on Instacart**
+button on the Expiring soon list.
+
 ### As a library
 
 ```python
@@ -235,6 +267,7 @@ Key modules:
 | `lettuceremind/web/server.py` | pantry-scanner web server (`lettuceremind serve`) |
 | `lettuceremind/web/static/app.html` | the mobile single-page app |
 | `lettuceremind/auth.py` | local accounts: register, login, sessions |
+| `lettuceremind/instacart.py` | per-account Instacart connection & shopping lists |
 | `lettuceremind/paths.py` | data directory resolution (`$LETTUCEREMIND_HOME`) |
 | `lettuceremind/cli.py` | command-line interface |
 
