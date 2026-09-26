@@ -168,6 +168,12 @@
     border-radius: 10px; padding: 7px 12px; font-size: 12.5px; font-weight: 700;
   }
   #deleteExpiringBtn:disabled { opacity: .4; }
+  .head-actions { display: flex; gap: 6px; }
+  #instacartBtn {
+    border: 0; background: #0aad0a; color: #fff;
+    border-radius: 10px; padding: 7px 12px; font-size: 12.5px; font-weight: 700;
+  }
+  #instacartBtn:disabled { opacity: .4; }
   #expiringEmpty { color: #6f957a; font-size: 13.5px; padding: 6px 2px; }
   .card.editing .badge { display: none; }
   .card .exp-edit {
@@ -282,7 +288,10 @@
   <section id="pantryPanel">
     <div class="panel-head">
       <h2>Expiring soon</h2>
-      <button id="deleteExpiringBtn" type="button" hidden>Delete all</button>
+      <div class="head-actions">
+        <button id="instacartBtn" type="button" hidden>Restock on Instacart</button>
+        <button id="deleteExpiringBtn" type="button" hidden>Delete all</button>
+      </div>
     </div>
     <div id="editExpiringBar">
       <span>Update dates below, then tap Save.</span>
@@ -620,6 +629,8 @@
     var deleteBtn = $("deleteExpiringBtn");
     deleteBtn.hidden = due.length === 0;
     deleteBtn.disabled = due.length === 0;
+    lastDueCount = due.length;
+    syncInstacartBtn();
 
     var expiringList = $("expiringList");
     expiringList.innerHTML = "";
@@ -644,6 +655,44 @@
       list.appendChild(makeItemCard(item, { editing: false }));
     });
   }
+
+  // ---- instacart --------------------------------------------------------
+  // Shown only when the logged-in account is connected
+  // (`lettuceremind instacart connect`).
+  var instacartConnected = false, lastDueCount = 0;
+
+  function syncInstacartBtn() {
+    var btn = $("instacartBtn");
+    btn.hidden = !instacartConnected || lastDueCount === 0;
+    btn.disabled = lastDueCount === 0;
+  }
+
+  function loadInstacart() {
+    return api("/api/instacart").then(function (data) {
+      instacartConnected = !!data.connected;
+    }).catch(function () {
+      instacartConnected = false;
+    }).then(syncInstacartBtn);
+  }
+
+  $("instacartBtn").addEventListener("click", function () {
+    var btn = this;
+    btn.disabled = true;
+    // Open the tab synchronously so iOS Safari doesn't block it as a popup.
+    var tab = window.open("", "_blank");
+    setStatus("Building your Instacart list…");
+    api("/api/instacart/shopping-list", {}).then(function (data) {
+      setStatus("Instacart list ready: " + data.count + " " +
+                (data.count === 1 ? "item" : "items") + ".", "good");
+      if (tab) tab.location.href = data.url;
+      else location.href = data.url;
+    }).catch(function (err) {
+      if (tab) tab.close();
+      setStatus("Instacart: " + err.message, "bad");
+    }).finally(function () {
+      btn.disabled = false;
+    });
+  });
 
   $("deleteExpiringBtn").addEventListener("click", function () {
     api("/api/pantry").then(function (data) {
@@ -702,6 +751,7 @@
       return;
     }
     setView("pantry");
+    loadInstacart();
     api("/api/pantry").then(renderPantry).catch(function (err) {
       $("pantryList").innerHTML = "";
       $("expiringList").innerHTML = "";
@@ -901,6 +951,7 @@
   });
 
   // ---- boot ------------------------------------------------------------
+  loadInstacart();
   try {
     var savedZip = localStorage.getItem("lettuceremind_zip");
     if (savedZip && /^\d{5}$/.test(savedZip)) $("zipInput").value = savedZip;

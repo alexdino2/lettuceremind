@@ -7,7 +7,9 @@ go. Frames are captured in the browser, sent here as JPEG, OCR'd
 (``lettuceremind[ocr]``), and resolved through the same normalize/match
 pipeline the receipt scanner uses. The same UI also exposes a Local Deals
 tab backed by ``/api/deals`` (built-in circulars plus any live Publix feed
-in ``~/.lettuceremind/deals.json``).
+in ``~/.lettuceremind/deals.json``), and — for an account connected to
+Instacart — a "Restock on Instacart" button that turns the expiring-soon
+list into an Instacart shopping list (``/api/instacart``).
 
 Security model: the server is meant for your own Wi-Fi. Unless started
 with ``--no-key`` it generates a random access key, embeds it in the URL
@@ -33,7 +35,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Optional, Union
 
-from lettuceremind import __version__
+from lettuceremind import __version__, auth, instacart
 from lettuceremind.deals import (
     STORES,
     current_deals,
@@ -362,6 +364,44 @@ class PantryScanApp:
         )
         return self._deals_payload(stores=["publix"], note=note)
 
+    def instacart_status(self) -> dict:
+        """The logged-in account's Instacart connection (never the key)."""
+        username = auth.current_user()
+        conn = instacart.get_connection(username) if username else None
+        return {
+            "user": username,
+            "connected": conn is not None,
+            "connection": conn.public_dict() if conn else None,
+        }
+
+    def instacart_shopping_list(self, payload: dict) -> dict:
+        """Create an Instacart shopping list — named items, or what's expiring."""
+        names = payload.get("names")
+        if names is not None and (
+            not isinstance(names, list)
+            or not all(isinstance(n, str) for n in names)
+        ):
+            raise ApiError(400, "'names' must be a list of strings")
+        try:
+            days = int(payload.get("days", EXPIRING_SOON_DAYS))
+        except (TypeError, ValueError):
+            raise ApiError(400, "'days' must be an integer") from None
+        try:
+            conn = instacart.require_connection()
+        except instacart.InstacartError as exc:
+            raise ApiError(409, str(exc)) from None
+        if names:
+            items = instacart.line_items((n, 1) for n in names)
+        else:
+            items = instacart.restock_items(self._store().all(), within_days=days)
+        if not items:
+            raise ApiError(400, f"nothing expires in the next {days} day(s)")
+        try:
+            url = instacart.create_shopping_list(conn, items)
+        except instacart.InstacartError as exc:
+            raise ApiError(502, str(exc)) from None
+        return {"url": url, "items": items, "count": len(items)}
+
 
 def _page_html() -> str:
     return (
@@ -452,6 +492,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(401, {"error": "missing or wrong access key"})
                 return
             self._json(200, self.app.pantry())
+        elif path == "/api/instacart":
+            if not self._authorized(query):
+                self._json(401, {"error": "missing or wrong access key"})
+                return
+            self._json(200, self.app.instacart_status())
         elif path == "/api/deals":
             if not self._authorized(query):
                 self._json(401, {"error": "missing or wrong access key"})
@@ -481,6 +526,7 @@ class _Handler(BaseHTTPRequestHandler):
             "/api/remove-expiring": self.app.remove_expiring,
             "/api/update-expiration": self.app.update_expiration,
             "/api/deals/refresh": self.app.refresh_deals,
+            "/api/instacart/shopping-list": self.app.instacart_shopping_list,
         }
         handler = routes.get(path)
         try:
@@ -488,7 +534,8 @@ class _Handler(BaseHTTPRequestHandler):
                 raise ApiError(404, "not found")
             if not self._authorized(query):
                 raise ApiError(401, "missing or wrong access key")
-            body = self._read_json_body(allow_empty=(path == "/api/deals/refresh"))
+            body = self._read_json_body(allow_empty=path in (
+                "/api/deals/refresh", "/api/instacart/shopping-list"))
             self._json(200, handler(body))
         except ApiError as exc:
             self._json(exc.status, {"error": str(exc)})
