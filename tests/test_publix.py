@@ -140,6 +140,23 @@ def test_fetch_weekly_ad_filters_digital_coupons():
     assert fillets.recommended_rank == 1
 
 
+def test_fetch_weekly_ad_decodes_mangled_entities():
+    payload = {"Savings": [{
+        "savingType": "WeeklyAd",
+        "title": "Adictivo A&amp;Ntilde;Ejo Tequila",
+        "savings": "$49.99",
+        "description": "Jalape&amp;ntilde;o Blend, 750 ml",
+        "department": "Beer &amp;amp; Wine",
+        "wa_startDate": _WA_START,
+        "wa_endDate": _WA_END,
+    }]}
+    with patch("lettuceremind.publix._get_json", return_value=payload):
+        (raw,) = fetch_weekly_ad("01243")
+    assert raw.title == "Adictivo Añejo Tequila"
+    assert raw.description == "Jalapeño Blend, 750 ml"
+    assert raw.department == "Beer & Wine"
+
+
 def test_map_to_deals_matches_food_db():
     raw = [
         RawPublixDeal(
