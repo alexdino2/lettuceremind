@@ -141,7 +141,7 @@ BUILTIN_CATALOG: dict[str, tuple[tuple[str, str, str, Optional[str]], ...]] = {
     "costco": (
         ("rotisserie chicken", "whole, hot", "$4.99", None),
         ("eggs", "24-count cage free", "$5.49", "$6.99"),
-        ("paper towels", "12 rolls", "$18.99", "$23.99"),
+        ("strawberries", "2 lb clamshell", "$5.99", "$7.49"),
         ("ground beef", "88/12, 5 lb pack", "$4.49/lb", "$5.49/lb"),
         ("salmon", "atlantic fillet", "$8.99/lb", "$10.99/lb"),
         ("spring mix", "1 lb clamshell", "$4.49", "$5.49"),
@@ -153,6 +153,97 @@ BUILTIN_CATALOG: dict[str, tuple[tuple[str, str, str, Optional[str]], ...]] = {
         ("butter", "4 x 1 lb", "$10.99", "$12.99"),
     ),
 }
+
+# The deals tab is for groceries, so alcohol, pharmacy / health & beauty,
+# and household or other non-food lines are dropped no matter where they
+# came from (built-in catalog, custom feed, or the live Publix circular).
+NON_FOOD_CATEGORIES = frozenset({"household", "baby & health"})
+
+_NON_FOOD_DEPARTMENTS = re.compile(
+    r"\b(?:beer|wine|liquor|spirits|alcohol|pharmacy|health (?:&|and) beauty|"
+    r"health care|beauty|personal care|wellness|vitamins?|supplements?|"
+    r"household|cleaning|laundry|paper|pet|floral|flowers|baby care|"
+    r"diapers?|tobacco|general merchandise|gift cards?|greeting cards?)\b",
+    re.I,
+)
+
+_NON_FOOD_TERMS = re.compile(
+    r"\b(?:"
+    # alcohol and related items
+    r"beers?|ales?|lagers?|ipas?|stouts?|porters?|pilsners?|wines?|"
+    r"champagne|prosecco|ros[eé]|merlot|cabernet|chardonnay|pinot|"
+    r"sauvignon|riesling|moscato|malbec|zinfandel|sangria|sake|vodka|"
+    r"whiske?y|bourbon|scotch|rum|tequila|mezcal|gin|brandy|cognac|"
+    r"liqueurs?|spirits|hard seltzers?|hard cider|hard lemonade|"
+    r"spiked|cocktails?|margaritas?|mixers?|bloody mary|daiquiri|mojito|"
+    r"white claw|twisted tea|mike'?s hard|high noon|"
+    r"budweiser|bud light|coors|miller lite|michelob|corona|modelo|heineken|"
+    r"stella artois|yuengling|blue moon|sam(?:uel)? adams|"
+    # pharmacy / health & beauty
+    r"pharmacy|medicines?|medications?|vitamins|multivitamins?|"
+    r"gummy vitamins|supplements?|pain relievers?|"
+    r"ibuprofen|acetaminophen|aspirin|naproxen|tylenol|advil|motrin|aleve|"
+    r"allergy|antihistamine|claritin|zyrtec|allegra|benadryl|cough|"
+    r"cold (?:and|&) flu|decongestant|antacids?|tums|laxative|nyquil|dayquil|"
+    r"mucinex|bandages?|band-aid|first aid|thermometer|sunscreen|lotion|"
+    r"shampoo|conditioner|body wash|deodorant|toothpaste|toothbrush|"
+    r"mouthwash|floss|razors?|shaving|cosmetics?|makeup|contact lens|"
+    r"diapers?|baby wipes|tampons?|incontinence|"
+    # household and other non-food
+    r"paper towels?|toilet paper|bath tissue|facial tissues?|napkins|"
+    r"paper plates|plastic cups|cutlery|detergent|fabric softener|"
+    r"dryer sheets|bleach|cleaners?|disinfecting|dish soap|dishwasher|"
+    r"sponges?|trash bags?|garbage bags?|aluminum foil|plastic wrap|"
+    r"storage bags|zip(?:loc|lock) bags|batteries|light bulbs?|charcoal|"
+    r"lighter fluid|propane|air fresheners?|candles?|"
+    r"dog food|cat food|pet food|dog treats|cat treats|cat litter|"
+    r"flowers?|bouquets?|roses|plants?|gift cards?|greeting cards?|"
+    r"cigarettes?|cigars?|tobacco|vapes?|lottery"
+    r")\b",
+    re.I,
+)
+
+# Grocery phrases that contain one of the words above.
+_FOOD_EXCEPTIONS = re.compile(
+    r"\b(?:(?:red |white |rice )?wine vinegar|cider vinegar|cooking wine|"
+    r"root beer|ginger beer|ginger ale|birch beer|beer[- ]battered|"
+    r"beer brats?|rum raisin|rum cake|bourbon chicken|vodka sauce|"
+    r"wine sauce|non[- ]?alcoholic|alcohol[- ]free|mocktails?|"
+    r"shrimp cocktail|cocktail sauce|cocktail shrimp|fruit cocktail|"
+    r"cocktail peanuts|cocktail franks|cocktail (?:sausages|smokies)|"
+    r"plant[- ]based|flower sprinkles)\b",
+    re.I,
+)
+
+
+def is_non_food(*texts: str, department: str = "") -> bool:
+    """True for alcohol, pharmacy / health & beauty, household, and other
+    non-food lines — judged from the item text and store department."""
+    if department and _NON_FOOD_DEPARTMENTS.search(department):
+        return True
+    text = " ".join(t for t in texts if t)
+    if not text:
+        return False
+    return bool(_NON_FOOD_TERMS.search(_FOOD_EXCEPTIONS.sub(" ", text)))
+
+
+def is_food_deal(deal: "Deal", matcher: Optional[FoodMatcher] = None) -> bool:
+    """Whether a deal belongs in the grocery deals list."""
+    if is_non_food(deal.item, deal.description):
+        return False
+    result = (matcher or _default_matcher()).match(deal.item)
+    return not (result.matched and result.food.category in NON_FOOD_CATEGORIES)
+
+
+_MATCHER: Optional[FoodMatcher] = None
+
+
+def _default_matcher() -> FoodMatcher:
+    global _MATCHER
+    if _MATCHER is None:
+        _MATCHER = FoodMatcher()
+    return _MATCHER
+
 
 _DEALS_PER_WEEK = 7
 _DEALS_PER_MONTH = 6  # Costco's savings book
@@ -249,7 +340,8 @@ def custom_deals(today: date, stores: Optional[list[str]] = None) -> list[Deal]:
 def current_deals(today: Optional[date] = None,
                   stores: Optional[list[str]] = None) -> list[Deal]:
     """All deals valid on ``today``: the built-in rotation plus any custom
-    feed entries, for the requested stores (default: all four).
+    feed entries, for the requested stores (default: all four). Alcohol,
+    pharmacy, and other non-food deals are filtered out.
 
     When the custom feed already has entries for a store, that store's
     built-in sample catalog is skipped so live Publix (or other) data
@@ -263,7 +355,7 @@ def current_deals(today: Optional[date] = None,
         if key not in custom_stores
     ]
     builtin = builtin_deals(today, builtin_stores) if builtin_stores else []
-    return builtin + custom
+    return [d for d in builtin + custom if is_food_deal(d)]
 
 
 def match_pantry(deals: list[Deal], pantry_items: list[PantryItem],
