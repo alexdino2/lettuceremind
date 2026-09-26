@@ -22,7 +22,13 @@ from datetime import date, datetime
 from typing import Any, Optional
 from urllib.request import Request
 
-from lettuceremind.deals import Deal, custom_feed_path, resolve_store
+from lettuceremind.deals import (
+    NON_FOOD_CATEGORIES,
+    Deal,
+    custom_feed_path,
+    is_non_food,
+    resolve_store,
+)
 from lettuceremind.receipt.matcher import FoodMatcher
 
 DEFAULT_ZIP = "32081"
@@ -309,6 +315,9 @@ def map_to_deals(
     best: dict[str, tuple[tuple, Deal]] = {}
 
     for raw in raw_deals:
+        # Groceries only: no alcohol, pharmacy, or household lines.
+        if is_non_food(raw.title, raw.description, department=raw.department):
+            continue
         result = matcher.match(raw.title)
         if not result.matched:
             continue
@@ -322,7 +331,7 @@ def map_to_deals(
         if not ok:
             continue
         name = result.food.name
-        if result.food.category in ("household", "baby & health"):
+        if result.food.category in NON_FOOD_CATEGORIES:
             continue
         if not raw.savings:
             continue

@@ -333,3 +333,20 @@ def test_cli_refresh_saves_feed(isolated_home, monkeypatch, capsys):
     data = json.loads(feed.read_text(encoding="utf-8"))
     assert data["store_number"] == "01243"
     assert any(d["item"] == "strawberries" for d in data["deals"])
+
+
+def test_map_skips_alcohol_pharmacy_and_non_food_departments():
+    rows = [
+        ("Michelob Ultra Beer", "Beer & Wine"),
+        ("Bold Rock Hard Cider", "Grocery"),
+        ("Publix Vitamins Gummy", "Pharmacy"),
+        ("Coffee Mug Gift Card", "General Merchandise"),
+        ("Florida Tropical Avocados", "Produce"),
+    ]
+    raw = [
+        RawPublixDeal(title=title, savings="BOGO", description="",
+                      department=dept, valid_from=date(2026, 8, 6),
+                      valid_to=date(2026, 8, 12))
+        for title, dept in rows
+    ]
+    assert [d.item for d in map_to_deals(raw)] == ["avocado"]

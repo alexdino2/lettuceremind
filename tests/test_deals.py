@@ -8,7 +8,10 @@ from lettuceremind.deals import (
     BUILTIN_CATALOG,
     STORES,
     builtin_deals,
+    Deal,
     current_deals,
+    is_food_deal,
+    is_non_food,
     match_pantry,
     resolve_store,
 )
@@ -150,3 +153,67 @@ def test_cli_deals_pantry_with_empty_pantry(capsys):
     rc = main(["deals", "--pantry", "--date", "2026-07-08"])
     assert rc == 0
     assert "No current deals match" in capsys.readouterr().out
+
+
+def test_builtin_catalog_is_all_food():
+    for store, entries in BUILTIN_CATALOG.items():
+        for item, desc, price, reg in entries:
+            deal = Deal(store=store, item=item, description=desc, price=price,
+                        regular_price=reg, valid_from=WED, valid_to=WED)
+            assert is_food_deal(deal), (store, item, desc)
+
+
+@pytest.mark.parametrize("text,department", [
+    ("Bud Light Beer", ""),
+    ("Kendall-Jackson Chardonnay", ""),
+    ("Tito's Handmade Vodka", ""),
+    ("White Claw Hard Seltzer Variety Pack", ""),
+    ("Mr & Mrs T Bloody Mary Mix", ""),
+    ("Anything", "Beer & Wine"),
+    ("Advil Pain Reliever", ""),
+    ("Nature Made Multivitamin", ""),
+    ("Claritin Allergy 24 Hour", ""),
+    ("Crest Toothpaste", ""),
+    ("Anything", "Pharmacy"),
+    ("Anything", "Health & Beauty"),
+    ("Bounty Paper Towels", ""),
+    ("Tide Laundry Detergent", ""),
+    ("Purina Dog Food", ""),
+    ("Kingsford Charcoal", ""),
+    ("Mixed Flower Bouquet", ""),
+    ("Anything", "Pet Care"),
+])
+def test_non_food_lines_are_flagged(text, department):
+    assert is_non_food(text, department=department)
+
+
+@pytest.mark.parametrize("text,department", [
+    ("Pompeian Red Wine Vinegar", "Grocery"),
+    ("A&W Root Beer", "Beverages"),
+    ("Canada Dry Ginger Ale", "Beverages"),
+    ("Gorton's Beer Battered Fish Fillets", "Frozen"),
+    ("Rao's Vodka Sauce", "Grocery"),
+    ("Del Monte Fruit Cocktail", "Canned"),
+    ("Publix Shrimp Cocktail", "Seafood"),
+    ("Vitamin D Whole Milk", "Dairy"),
+    ("Rosemary Focaccia", "Bakery"),
+    ("Ginger Snaps", "Snacks"),
+    ("Cauliflower Rice", "Frozen"),
+    ("Health Food Granola", "Natural & Organic"),
+])
+def test_grocery_lines_are_not_flagged(text, department):
+    assert not is_non_food(text, department=department)
+
+
+def test_custom_feed_non_food_deals_are_dropped(isolated_home, monkeypatch):
+    feed = isolated_home / "feed.json"
+    feed.write_text(json.dumps({"deals": [
+        {"store": "kroger", "item": "milk", "price": "$1.49"},
+        {"store": "kroger", "item": "wine", "price": "$9.99",
+         "description": "Barefoot Pinot Grigio 1.5 L"},
+        {"store": "kroger", "item": "paper towels", "price": "$12.99"},
+        {"store": "kroger", "item": "vitamins", "price": "BOGO"},
+    ]}))
+    monkeypatch.setenv("LETTUCEREMIND_DEALS", str(feed))
+    deals = current_deals(today=WED, stores=["kroger"])
+    assert [d.item for d in deals] == ["milk"]
