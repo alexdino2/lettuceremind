@@ -140,20 +140,20 @@ per-user pantry. `--host` and `--port` (default 8043) work as expected.
 ## 💸 Local deals
 
 LettuceRemind tracks weekly grocery deals at **Publix**, **Kroger**,
-**Whole Foods**, and **Costco**, and cross-references them with your pantry —
+**Whole Foods**, **Aldi**, and **Costco**, and cross-references them with your pantry —
 so you know when something you're about to run out of is on sale. Browse them
 in the phone app's **Deals** tab, or from the CLI:
 
 ```bash
-lettuceremind deals                  # this week's deals at all four stores
-lettuceremind deals publix           # one store (kroger, "whole foods", costco)
+lettuceremind deals                  # this week's deals at all five stores
+lettuceremind deals publix           # one store (kroger, "whole foods", aldi, costco)
 lettuceremind deals --pantry         # only deals on items currently in your pantry
 lettuceremind deals --zip 32081      # live Publix weekly ad near a ZIP (saves deals.json)
 lettuceremind deals --zip 32081 --refresh   # same — --refresh is an alias for --zip
 ```
 
 ```
-💸 Local deals for 2026-08-09 — Publix, Kroger, Whole Foods, Costco
+💸 Local deals for 2026-08-09 — Publix, Kroger, Whole Foods, Aldi, Costco
 
   Publix
     strawberries — 6 or 16 oz   BOGO         thru Aug 12  ← in your pantry, expires in 2d — restock
