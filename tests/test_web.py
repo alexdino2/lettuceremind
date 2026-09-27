@@ -140,6 +140,67 @@ def test_manual_add_and_remove(app):
     assert app.pantry()["count"] == 0
 
 
+def test_inventory_photo_is_reviewed_before_items_are_added(tmp_path):
+    seen = {}
+
+    def analyze(image, media_type, current):
+        seen.update(image=image, media_type=media_type, current=current)
+        return [
+            {"name": "whole milk", "quantity": 1, "confidence": 0.96},
+            {"name": "greek yogurt", "quantity": 2, "confidence": 0.91},
+        ]
+
+    photo_app = PantryScanApp(
+        store_path=tmp_path / "photo-pantry.json",
+        vision_analyzer=analyze,
+    )
+    photo_app.add({"name": "milk", "quantity": 1})
+    encoded = base64.b64encode(b"fake-jpeg").decode()
+    result = photo_app.analyze_inventory_photo({
+        "image": encoded,
+        "media_type": "image/jpeg",
+    })
+
+    assert seen["image"] == b"fake-jpeg"
+    assert seen["current"] == [{"name": "milk", "quantity": 1}]
+    assert photo_app.pantry()["count"] == 1  # analysis never writes
+    milk = next(item for item in result["items"] if item["name"] == "milk")
+    yogurt = next(item for item in result["items"] if item["name"] == "yogurt")
+    assert milk["already_in_inventory"] is True
+    assert milk["existing_quantity"] == 1
+    assert milk["selected"] is False
+    assert yogurt["selected"] is True
+    assert yogurt["quantity"] == 2
+
+
+def test_confirm_inventory_photo_uses_manual_expiration_defaults(app):
+    from datetime import date, timedelta
+
+    result = app.confirm_inventory_photo({"items": [
+        {"name": "greek yogurt", "quantity": 2, "selected": True},
+        {"name": "milk", "quantity": 1, "selected": False},
+    ]})
+
+    assert result["added_count"] == 1
+    assert result["added"][0]["name"] == "yogurt"
+    assert result["added"][0]["quantity"] == 2
+    assert result["added"][0]["expires_on"] == (
+        date.today() + timedelta(days=14)
+    ).isoformat()
+    assert app.pantry()["count"] == 1
+
+
+def test_inventory_photo_validates_input(app):
+    with pytest.raises(ApiError) as exc:
+        app.analyze_inventory_photo({"image": "bad!!"})
+    assert exc.value.status == 400
+    with pytest.raises(ApiError) as exc:
+        app.confirm_inventory_photo({"items": [
+            {"name": "milk", "quantity": 0, "selected": True},
+        ]})
+    assert exc.value.status == 400
+
+
 def test_pantry_includes_expiring_soon(app):
     from datetime import date, timedelta
     from lettuceremind.models import PantryItem
@@ -251,6 +312,8 @@ def test_page_requires_key_and_serves_app(server):
     assert b"Pantry Scanner" in body
     assert b"id=\"dealsBtn\"" in body
     assert b"id=\"dealsPanel\"" in body
+    assert b"id=\"inventoryPhotoBtn\"" in body
+    assert b"id=\"photoReviewOverlay\"" in body
 
     # Deep links into the SPA must serve the same app (not JSON 404).
     for path in ("/deals", "/pantry"):

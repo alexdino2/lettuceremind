@@ -131,6 +131,14 @@ Open that URL in Safari and scan away. How it works:
   (also at `/deals`) that lists this week's local grocery deals. Use
   **Refresh Publix** with your ZIP to pull the live weekly ad into
   `~/.lettuceremind/deals.json` (same feed the CLI uses).
+- **Update from a full inventory photo** accepts a fridge, pantry, or freezer
+  picture and uses vision analysis to suggest everything visible. It compares
+  suggestions with the current pantry, leaves existing items unchecked, and
+  lets you edit names and quantities before confirming. Confirmed items use
+  the same default expiration dates as the manual add form. Set
+  `OPENAI_API_KEY` (or `LETTUCEREMIND_VISION_API_KEY`) on the server; an
+  OpenAI-compatible endpoint/model can be selected with
+  `LETTUCEREMIND_VISION_URL` and `LETTUCEREMIND_VISION_MODEL`.
 
 The server protects your pantry with a random access key baked into the
 printed URL (disable with `--no-key`), and uses the same pantry
