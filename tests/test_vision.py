@@ -19,6 +19,8 @@ def test_analyze_inventory_image_builds_vision_request(monkeypatch):
 
     monkeypatch.setenv("LETTUCEREMIND_VISION_API_KEY", "test-key")
     monkeypatch.setenv("LETTUCEREMIND_VISION_MODEL", "test-vision-model")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(vision, "_request_json", fake_request)
 
     result = vision.analyze_inventory_image(
@@ -27,7 +29,11 @@ def test_analyze_inventory_image_builds_vision_request(monkeypatch):
 
     assert result == [{"name": "milk", "quantity": 1, "confidence": 0.98}]
     assert captured["api_key"] == "test-key"
+    assert captured["url"] == vision.GEMINI_ENDPOINT
     assert captured["payload"]["model"] == "test-vision-model"
+    schema = captured["payload"]["response_format"]
+    assert schema["type"] == "json_schema"
+    assert schema["json_schema"]["strict"] is True
     content = captured["payload"]["messages"][0]["content"]
     assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
     assert '"name":"eggs"' in content[0]["text"]
@@ -35,6 +41,7 @@ def test_analyze_inventory_image_builds_vision_request(monkeypatch):
 
 def test_analyze_inventory_image_requires_key(monkeypatch):
     monkeypatch.delenv("LETTUCEREMIND_VISION_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     try:
@@ -43,6 +50,44 @@ def test_analyze_inventory_image_requires_key(monkeypatch):
         assert "OPENAI_API_KEY" in str(exc)
     else:
         raise AssertionError("missing API key should fail")
+
+
+def test_openai_key_uses_compatible_fallback(monkeypatch):
+    captured = {}
+
+    def fake_request(url, payload, api_key):
+        captured.update(url=url, payload=payload, api_key=api_key)
+        return {"choices": [{"message": {"content": '{"items":[]}'}}]}
+
+    monkeypatch.delenv("LETTUCEREMIND_VISION_API_KEY", raising=False)
+    monkeypatch.delenv("LETTUCEREMIND_VISION_URL", raising=False)
+    monkeypatch.delenv("LETTUCEREMIND_VISION_MODEL", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-test-key")
+    monkeypatch.setattr(vision, "_request_json", fake_request)
+
+    assert vision.analyze_inventory_image(b"image", "image/jpeg", []) == []
+    assert captured["url"] == vision.OPENAI_ENDPOINT
+    assert captured["payload"]["model"] == vision.OPENAI_FALLBACK_MODEL
+
+
+def test_gemini_key_uses_recommended_default(monkeypatch):
+    captured = {}
+
+    def fake_request(url, payload, api_key):
+        captured.update(url=url, payload=payload, api_key=api_key)
+        return {"choices": [{"message": {"content": '{"items":[]}'}}]}
+
+    monkeypatch.delenv("LETTUCEREMIND_VISION_API_KEY", raising=False)
+    monkeypatch.delenv("LETTUCEREMIND_VISION_URL", raising=False)
+    monkeypatch.delenv("LETTUCEREMIND_VISION_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-key")
+    monkeypatch.setattr(vision, "_request_json", fake_request)
+
+    assert vision.analyze_inventory_image(b"image", "image/jpeg", []) == []
+    assert captured["url"] == vision.GEMINI_ENDPOINT
+    assert captured["payload"]["model"] == "gemini-3.1-flash-lite"
 
 
 def test_json_object_accepts_fenced_json():
