@@ -15,8 +15,13 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-DEFAULT_ENDPOINT = "https://api.openai.com/v1/chat/completions"
-DEFAULT_MODEL = "gpt-4o-mini"
+GEMINI_ENDPOINT = (
+    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+)
+OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions"
+DEFAULT_ENDPOINT = GEMINI_ENDPOINT
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
+OPENAI_FALLBACK_MODEL = "gpt-5-mini"
 MAX_SUGGESTIONS = 60
 
 
@@ -66,20 +71,31 @@ def analyze_inventory_image(
 ) -> list[dict]:
     """Return food candidates visible in an image using a vision model.
 
-    Configure with ``LETTUCEREMIND_VISION_API_KEY`` (or ``OPENAI_API_KEY``).
-    The endpoint and model can be overridden for any OpenAI-compatible
-    service with ``LETTUCEREMIND_VISION_URL`` and
-    ``LETTUCEREMIND_VISION_MODEL``.
+    ``GEMINI_API_KEY`` selects the recommended Gemini 3.1 Flash-Lite model.
+    ``OPENAI_API_KEY`` remains supported as a fallback.  The endpoint, key,
+    and model can also be overridden for any OpenAI-compatible service with
+    the ``LETTUCEREMIND_VISION_*`` variables.
     """
-    api_key = (
-        os.environ.get("LETTUCEREMIND_VISION_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-    )
+    explicit_url = os.environ.get("LETTUCEREMIND_VISION_URL")
+    explicit_key = os.environ.get("LETTUCEREMIND_VISION_API_KEY")
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    api_key = explicit_key or gemini_key or openai_key
     if not api_key:
         raise RuntimeError(
-            "Photo inventory needs OPENAI_API_KEY (or "
-            "LETTUCEREMIND_VISION_API_KEY) on the server."
+            "Photo inventory needs GEMINI_API_KEY on the server "
+            "(OPENAI_API_KEY and LETTUCEREMIND_VISION_API_KEY are also supported)."
         )
+    if explicit_url:
+        endpoint = explicit_url
+        default_model = DEFAULT_MODEL
+    elif gemini_key or explicit_key:
+        endpoint = GEMINI_ENDPOINT
+        default_model = DEFAULT_MODEL
+    else:
+        endpoint = OPENAI_ENDPOINT
+        default_model = OPENAI_FALLBACK_MODEL
+    model = os.environ.get("LETTUCEREMIND_VISION_MODEL", default_model)
 
     inventory_text = json.dumps(current_inventory, separators=(",", ":"))
     prompt = (
@@ -96,9 +112,44 @@ def analyze_inventory_image(
         + base64.b64encode(image).decode("ascii")
     )
     payload = {
-        "model": os.environ.get("LETTUCEREMIND_VISION_MODEL", DEFAULT_MODEL),
+        "model": model,
         "temperature": 0,
-        "response_format": {"type": "json_object"},
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "inventory_photo",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "maxItems": MAX_SUGGESTIONS,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "quantity": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "maximum": 99,
+                                    },
+                                    "confidence": {
+                                        "type": "number",
+                                        "minimum": 0,
+                                        "maximum": 1,
+                                    },
+                                },
+                                "required": ["name", "quantity", "confidence"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                    "required": ["items"],
+                    "additionalProperties": False,
+                },
+            },
+        },
         "messages": [{
             "role": "user",
             "content": [
@@ -108,7 +159,7 @@ def analyze_inventory_image(
         }],
     }
     response = _request_json(
-        os.environ.get("LETTUCEREMIND_VISION_URL", DEFAULT_ENDPOINT),
+        endpoint,
         payload,
         api_key,
     )

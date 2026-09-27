@@ -136,9 +136,11 @@ Open that URL in Safari and scan away. How it works:
   suggestions with the current pantry, leaves existing items unchecked, and
   lets you edit names and quantities before confirming. Confirmed items use
   the same default expiration dates as the manual add form. Set
-  `OPENAI_API_KEY` (or `LETTUCEREMIND_VISION_API_KEY`) on the server; an
-  OpenAI-compatible endpoint/model can be selected with
-  `LETTUCEREMIND_VISION_URL` and `LETTUCEREMIND_VISION_MODEL`.
+  `GEMINI_API_KEY` on the server to use the default
+  `gemini-3.1-flash-lite` model. `OPENAI_API_KEY` remains supported as a
+  fallback. Any OpenAI-compatible endpoint, key, and model can be selected with
+  `LETTUCEREMIND_VISION_URL`, `LETTUCEREMIND_VISION_API_KEY`, and
+  `LETTUCEREMIND_VISION_MODEL`.
 
 The server protects your pantry with a random access key baked into the
 printed URL (disable with `--no-key`), and uses the same pantry
