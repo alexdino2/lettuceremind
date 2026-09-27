@@ -119,6 +119,18 @@
     border: 0; background: #2e9e52; color: #fff; border-radius: 12px;
     padding: 0 18px; font-size: 15px; font-weight: 700;
   }
+  #inventoryPhotoBox {
+    background: #12301a; border: 1px solid #244c32; border-radius: 14px;
+    padding: 13px; margin: 0 0 16px; font-size: 13px; line-height: 1.4;
+    color: #b9d4c0; display: flex; align-items: center; gap: 12px;
+  }
+  #inventoryPhotoBox .info { flex: 1; }
+  #inventoryPhotoBox strong { color: #eaf5ec; display: block; font-size: 14px; }
+  #inventoryPhotoBtn {
+    border: 0; background: #2e9e52; color: #fff; border-radius: 11px;
+    padding: 10px 13px; font-size: 13px; font-weight: 700; white-space: nowrap;
+  }
+  #inventoryPhotoInput { display: none; }
 
   #pantryPanel, #dealsPanel { display: none; }
   body.show-pantry #scannerPanel,
@@ -229,6 +241,39 @@
     display: block; text-align: center; font-size: 13.5px;
     color: #9df0b4; text-decoration: underline; padding: 6px 4px 2px;
   }
+  #photoReviewOverlay {
+    display: none; position: fixed; inset: 0; z-index: 45;
+    background: rgba(4, 14, 8, .8); padding: 16px;
+    align-items: center; justify-content: center;
+  }
+  #photoReviewOverlay.open { display: flex; }
+  #photoReview {
+    width: 100%; max-width: 460px; max-height: calc(100vh - 32px);
+    overflow: auto; background: #16341f; border: 1px solid #2c5238;
+    border-radius: 18px; padding: 18px 16px;
+  }
+  #photoReview h3 { font-size: 17px; margin-bottom: 5px; }
+  #photoReviewIntro { color: #a9cbb1; font-size: 13px; line-height: 1.4; margin-bottom: 13px; }
+  .review-row {
+    display: grid; grid-template-columns: 24px minmax(0, 1fr) 58px;
+    gap: 8px; align-items: center; padding: 10px 0;
+    border-top: 1px solid #294b34;
+  }
+  .review-row input[type="checkbox"] { width: 19px; height: 19px; accent-color: #2e9e52; }
+  .review-row input[type="text"], .review-row input[type="number"] {
+    width: 100%; border: 1px solid #2c5238; background: #0f2b19;
+    color: inherit; border-radius: 9px; padding: 8px; font-size: 14px;
+  }
+  .review-row .review-meta { grid-column: 2 / 4; color: #9dbfa6; font-size: 11.5px; }
+  .review-row .existing { color: #ffce9d; font-weight: 700; }
+  #photoReviewActions { display: flex; gap: 8px; margin-top: 14px; }
+  #photoReviewActions button {
+    flex: 1; border: 0; border-radius: 12px; padding: 12px;
+    font-size: 14px; font-weight: 700;
+  }
+  #cancelPhotoReview { background: rgba(255,255,255,.12); color: inherit; }
+  #confirmPhotoItems { background: #2e9e52; color: #fff; }
+  #confirmPhotoItems:disabled, #inventoryPhotoBtn:disabled { opacity: .5; }
 </style>
 </head>
 <body>
@@ -263,6 +308,15 @@
     </div>
 
     <div id="status">Starting camera…</div>
+
+    <div id="inventoryPhotoBox">
+      <div class="info">
+        <strong>Update from a full inventory photo</strong>
+        Upload a fridge, pantry, or freezer picture. Review detected items before anything is added.
+      </div>
+      <button id="inventoryPhotoBtn" type="button">Upload</button>
+      <input type="file" id="inventoryPhotoInput" accept="image/jpeg,image/png,image/webp">
+    </div>
 
     <h2>Added this session</h2>
     <div id="feed"><div id="feedEmpty">Nothing scanned yet.</div></div>
@@ -313,6 +367,18 @@
       <button id="confirmDelete" type="button">Delete</button>
     </div>
     <a href="#" id="changeDatesLink">Change expiration dates instead</a>
+  </div>
+</div>
+
+<div id="photoReviewOverlay" role="dialog" aria-modal="true" aria-labelledby="photoReviewTitle">
+  <div id="photoReview">
+    <h3 id="photoReviewTitle">Review detected items</h3>
+    <p id="photoReviewIntro">Check the items you want to add. Existing pantry items are left unchecked to prevent duplicates.</p>
+    <div id="photoReviewList"></div>
+    <div id="photoReviewActions">
+      <button id="cancelPhotoReview" type="button">Cancel</button>
+      <button id="confirmPhotoItems" type="button">Add selected</button>
+    </div>
   </div>
 </div>
 
@@ -497,6 +563,135 @@
     };
     img.onerror = function () { URL.revokeObjectURL(url); setStatus("Couldn't read that photo.", "bad"); };
     img.src = url;
+  });
+
+  // ---- full inventory photo (analyze, then confirm) -------------------
+  function closePhotoReview() {
+    $("photoReviewOverlay").classList.remove("open");
+    $("photoReviewList").innerHTML = "";
+  }
+
+  function renderPhotoReview(data) {
+    var list = $("photoReviewList");
+    list.innerHTML = "";
+    if (!data.items || !data.items.length) {
+      var empty = document.createElement("p");
+      empty.className = "review-meta";
+      empty.textContent = "No inventory items were confidently identified. Try a brighter, closer photo.";
+      list.appendChild(empty);
+      $("confirmPhotoItems").disabled = true;
+    } else {
+      $("confirmPhotoItems").disabled = false;
+      data.items.forEach(function (item) {
+        var row = document.createElement("div");
+        row.className = "review-row";
+
+        var check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = !!item.selected;
+        check.setAttribute("aria-label", "Add " + item.name);
+
+        var name = document.createElement("input");
+        name.type = "text";
+        name.value = item.name;
+        name.setAttribute("aria-label", "Item name");
+
+        var qty = document.createElement("input");
+        qty.type = "number";
+        qty.min = "1"; qty.max = "99"; qty.value = item.quantity || 1;
+        qty.setAttribute("aria-label", "Quantity");
+
+        var meta = document.createElement("div");
+        meta.className = "review-meta";
+        meta.textContent = item.category + " · expires " + item.expires_on;
+        if (item.already_in_inventory) {
+          var existing = document.createElement("span");
+          existing.className = "existing";
+          existing.textContent = " · already tracked: " + item.existing_quantity;
+          meta.appendChild(existing);
+        }
+        row.appendChild(check);
+        row.appendChild(name);
+        row.appendChild(qty);
+        row.appendChild(meta);
+        list.appendChild(row);
+      });
+    }
+    $("photoReviewOverlay").classList.add("open");
+  }
+
+  function analyzeInventoryFile(file) {
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    $("inventoryPhotoBtn").disabled = true;
+    setStatus("Analyzing your inventory photo…");
+    img.onload = function () {
+      URL.revokeObjectURL(url);
+      var image = frameToJpegBase64(img, img.naturalWidth, img.naturalHeight);
+      api("/api/inventory-photo/analyze", {
+        image: image, media_type: "image/jpeg"
+      }).then(function (data) {
+        renderPhotoReview(data);
+        setStatus("Review the detected items before adding them.", "good");
+      }).catch(function (err) {
+        setStatus("Photo analysis failed: " + err.message, "bad");
+      }).finally(function () {
+        $("inventoryPhotoBtn").disabled = false;
+      });
+    };
+    img.onerror = function () {
+      URL.revokeObjectURL(url);
+      $("inventoryPhotoBtn").disabled = false;
+      setStatus("Couldn't read that inventory photo.", "bad");
+    };
+    img.src = url;
+  }
+
+  $("inventoryPhotoBtn").addEventListener("click", function () {
+    $("inventoryPhotoInput").click();
+  });
+  $("inventoryPhotoInput").addEventListener("change", function () {
+    var file = this.files && this.files[0];
+    this.value = "";
+    if (file) analyzeInventoryFile(file);
+  });
+  $("cancelPhotoReview").addEventListener("click", closePhotoReview);
+  $("photoReviewOverlay").addEventListener("click", function (e) {
+    if (e.target === this) closePhotoReview();
+  });
+  $("confirmPhotoItems").addEventListener("click", function () {
+    var btn = this;
+    var items = Array.prototype.map.call(
+      $("photoReviewList").querySelectorAll(".review-row"),
+      function (row) {
+        return {
+          selected: row.querySelector('input[type="checkbox"]').checked,
+          name: row.querySelector('input[type="text"]').value.trim(),
+          quantity: Number(row.querySelector('input[type="number"]').value)
+        };
+      }
+    );
+    btn.disabled = true;
+    api("/api/inventory-photo/confirm", { items: items }).then(function (data) {
+      closePhotoReview();
+      setCount(data.pantry_count);
+      data.added.forEach(function (item) {
+        addFeedCard({
+          name: item.name, category: item.category,
+          confidence: 1, expires_on: item.expires_on
+        });
+      });
+      setStatus(
+        data.added_count
+          ? "Added " + data.added_count + " reviewed item" +
+            (data.added_count === 1 ? "." : "s.")
+          : "No items selected.",
+        data.added_count ? "good" : ""
+      );
+    }).catch(function (err) {
+      setStatus("Couldn't add photo items: " + err.message, "bad");
+      btn.disabled = false;
+    });
   });
 
   $("autoBtn").addEventListener("click", function () {

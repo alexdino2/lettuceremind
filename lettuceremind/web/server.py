@@ -33,7 +33,7 @@ from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 from lettuceremind import __version__, auth, instacart
 from lettuceremind.deals import (
@@ -49,7 +49,7 @@ from lettuceremind.receipt.matcher import FoodMatcher
 from lettuceremind.reminders import expiring_soon
 from lettuceremind.shelf_life import shelf_life_for
 from lettuceremind.store import PantryStore
-from lettuceremind.web import recognize
+from lettuceremind.web import recognize, vision
 
 #: Default window (days) for the web "expiring soon" panel — matches CLI.
 EXPIRING_SOON_DAYS = 3
@@ -81,6 +81,7 @@ class PantryScanApp:
         api_key: Optional[str] = None,
         dedupe_window: float = DUPLICATE_WINDOW_SECONDS,
         clock=time.monotonic,
+        vision_analyzer: Optional[Callable[[bytes, str, list[dict]], list[dict]]] = None,
     ):
         self.store_path = store_path
         self.api_key = api_key
@@ -89,6 +90,7 @@ class PantryScanApp:
         self._recent: dict[str, float] = {}  # food name -> last-added time
         self._dedupe_window = dedupe_window
         self._clock = clock
+        self._vision_analyzer = vision_analyzer or vision.analyze_inventory_image
 
     def _store(self) -> PantryStore:
         # A fresh store per request picks up concurrent CLI edits.
@@ -191,6 +193,119 @@ class PantryScanApp:
             store.add(item)
             count = len(store.all())
         return {"added": self._item_dict(item), "pantry_count": count}
+
+    @staticmethod
+    def _image_bytes(payload: dict) -> tuple[bytes, str]:
+        image_b64 = payload.get("image")
+        if not image_b64:
+            raise ApiError(400, "missing 'image'")
+        try:
+            data = base64.b64decode(image_b64, validate=True)
+        except (binascii.Error, ValueError, TypeError):
+            raise ApiError(400, "invalid base64 image data") from None
+        if not data:
+            raise ApiError(400, "image is empty")
+        media_type = str(payload.get("media_type") or "image/jpeg").lower()
+        if media_type not in ("image/jpeg", "image/png", "image/webp"):
+            raise ApiError(400, "image must be JPEG, PNG, or WebP")
+        return data, media_type
+
+    def analyze_inventory_photo(self, payload: dict) -> dict:
+        """Analyze a wide inventory photo without changing the pantry."""
+        image, media_type = self._image_bytes(payload)
+        pantry_items = self._store().all()
+        quantities: dict[str, int] = {}
+        for item in pantry_items:
+            key = item.name.lower()
+            quantities[key] = quantities.get(key, 0) + item.quantity
+        current = [
+            {"name": name, "quantity": quantity}
+            for name, quantity in sorted(quantities.items())
+        ]
+        try:
+            candidates = self._vision_analyzer(image, media_type, current)
+        except RuntimeError as exc:
+            raise ApiError(503, str(exc)) from None
+
+        merged: dict[str, dict] = {}
+        today = date.today()
+        for candidate in candidates:
+            raw_name = str(candidate.get("name") or "").strip()
+            if not raw_name:
+                continue
+            try:
+                quantity = max(1, min(99, int(candidate.get("quantity", 1))))
+                model_confidence = float(candidate.get("confidence", 0.5))
+            except (TypeError, ValueError):
+                continue
+            match = self._matcher.match(raw_name)
+            name = match.food.name
+            if name in merged:
+                merged[name]["quantity"] = min(
+                    99, merged[name]["quantity"] + quantity
+                )
+                merged[name]["confidence"] = max(
+                    merged[name]["confidence"], round(model_confidence, 2)
+                )
+                continue
+            existing_quantity = quantities.get(name.lower(), 0)
+            days = shelf_life_for(match.food)
+            merged[name] = {
+                "name": name,
+                "source_name": raw_name,
+                "category": match.food.category,
+                "quantity": quantity,
+                "confidence": round(max(0.0, min(1.0, model_confidence)), 2),
+                "existing_quantity": existing_quantity,
+                "already_in_inventory": existing_quantity > 0,
+                "selected": existing_quantity == 0,
+                "expires_on": (today + timedelta(days=days)).isoformat(),
+            }
+        return {
+            "items": list(merged.values()),
+            "count": len(merged),
+            "pantry_count": len(pantry_items),
+        }
+
+    def confirm_inventory_photo(self, payload: dict) -> dict:
+        """Add user-approved photo suggestions with normal shelf-life defaults."""
+        entries = payload.get("items")
+        if not isinstance(entries, list):
+            raise ApiError(400, "'items' must be a list")
+        if len(entries) > vision.MAX_SUGGESTIONS:
+            raise ApiError(400, "too many items")
+        today = date.today()
+        to_add: list[PantryItem] = []
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get("selected") is False:
+                continue
+            name = str(entry.get("name") or "").strip()
+            if not name:
+                raise ApiError(400, "every selected item needs a name")
+            try:
+                quantity = int(entry.get("quantity", 1))
+            except (TypeError, ValueError):
+                raise ApiError(400, "'quantity' must be an integer") from None
+            if quantity < 1 or quantity > 99:
+                raise ApiError(400, "'quantity' must be between 1 and 99")
+            match = self._matcher.match(name)
+            to_add.append(PantryItem(
+                name=match.food.name,
+                category=match.food.category,
+                quantity=quantity,
+                added_on=today,
+                expires_on=today + timedelta(days=shelf_life_for(match.food)),
+            ))
+        with self._lock:
+            store = self._store()
+            if to_add:
+                store.add_all(to_add)
+            count = len(store.all())
+        return {
+            "added": [self._item_dict(item) for item in to_add],
+            "added_count": len(to_add),
+            "pantry_count": count,
+        }
 
     def remove(self, payload: dict) -> dict:
         """Remove items by name — also the scanner feed's undo."""
@@ -522,6 +637,8 @@ class _Handler(BaseHTTPRequestHandler):
         routes = {
             "/api/scan": self.app.scan,
             "/api/add": self.app.add,
+            "/api/inventory-photo/analyze": self.app.analyze_inventory_photo,
+            "/api/inventory-photo/confirm": self.app.confirm_inventory_photo,
             "/api/remove": self.app.remove,
             "/api/remove-expiring": self.app.remove_expiring,
             "/api/update-expiration": self.app.update_expiration,
