@@ -170,6 +170,14 @@ def test_builtin_catalog_is_all_food():
     ("Tito's Handmade Vodka", ""),
     ("White Claw Hard Seltzer Variety Pack", ""),
     ("Mr & Mrs T Bloody Mary Mix", ""),
+    ("Vidamigos Añejo", ""),
+    ("Rumchata Horchata Con Ron", ""),
+    ("8-Pack Shotty's Shots", ""),
+    ("Fever-Tree", ""),
+    ("Flying Embers Hard Kombucha", ""),
+    ("Martini & Rossi Sweet Vermouth", ""),
+    ("Anything", "Liquor Store"),
+    ("Anything", "Cold Beer"),
     ("Anything", "Beer & Wine"),
     ("Advil Pain Reliever", ""),
     ("Nature Made Multivitamin", ""),
@@ -201,6 +209,11 @@ def test_non_food_lines_are_flagged(text, department):
     ("Ginger Snaps", "Snacks"),
     ("Cauliflower Rice", "Frozen"),
     ("Health Food Granola", "Natural & Organic"),
+    ("Kevita Master Brew Kombucha", ""),
+    ("Publix Malta Malt Beverage", ""),
+    ("Jack Daniel's Pulled Pork", ""),
+    ("Magic Mind Mental Performance Shot", ""),
+    ("Rummo Pasta", "Pasta & Pasta Sauce"),
 ])
 def test_grocery_lines_are_not_flagged(text, department):
     assert not is_non_food(text, department=department)
