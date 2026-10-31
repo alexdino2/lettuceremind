@@ -191,9 +191,12 @@ _NON_FOOD_TERMS = re.compile(
     r"champagne|prosecco|ros[eé]|merlot|cabernet|chardonnay|pinot|"
     r"sauvignon|riesling|moscato|malbec|zinfandel|sangria|sake|vodka|"
     r"whiske?y|bourbon|scotch|rum|tequila|mezcal|gin|brandy|cognac|"
+    r"a[ñn]ejo|reposado|vermouth|schnapps|absinthe|soju|limoncello|"
     r"liqueurs?|spirits|hard seltzers?|hard cider|hard lemonade|"
+    r"hard teas?|hard kombucha|abv|"
     r"spiked|cocktails?|margaritas?|mixers?|bloody mary|daiquiri|mojito|"
     r"white claw|twisted tea|mike'?s hard|high noon|"
+    r"rumchata|smirnoff|fever[- ]tree|shotty'?s|"
     r"budweiser|bud light|coors|miller lite|michelob|corona|modelo|heineken|"
     r"stella artois|yuengling|blue moon|sam(?:uel)? adams|"
     # pharmacy / health & beauty
